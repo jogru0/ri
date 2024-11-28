@@ -1,0 +1,14 @@
+fun add(left: int, right: int) -> int {
+    left + right
+}
+
+fun complex(n: int) -> bool {
+    val m: int = m * m;
+    val res: bool = true;
+    while m > n {
+        res = !res;
+        m /= 2;
+    }
+
+    res
+}
