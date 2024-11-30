@@ -1,6 +1,6 @@
 use std::{env::args, fmt::Debug, fs::read_to_string, io::Error};
 
-use ri::parse::{tokenize, ParseError, RuntimeError, TokenizeError};
+use ri::parse::{ParseError, RuntimeError, TokenizeError, Tokens};
 use thiserror::Error;
 
 #[derive(Error)]
@@ -31,7 +31,7 @@ fn main() -> Result<(), MainError> {
 
     let code = read_to_string(&args[1]).map_err(|err| MainError::IoError(path.into(), err))?;
 
-    let tokens = tokenize(&code)?;
+    let tokens = Tokens::from_code(&code)?;
 
     let ast = tokens.parse()?;
 

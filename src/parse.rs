@@ -28,6 +28,10 @@ pub enum RuntimeError {
     TypeError(Ty, Ty),
     #[error("invalid operation:'{0} {1} {2}'")]
     InvalidBinaryOperation(Constant, BinaryOperator, Constant),
+    #[error("function'{0}' has return type '{1}', but evaluated to '{2}'")]
+    WrongReturnType(Word, Ty, Ty),
+    #[error("missing entry point (function '{}')", *MAIN)]
+    NoEntryPoint,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -120,27 +124,37 @@ impl Add for IntConstant {
 }
 
 pub enum Expr {
-    Return(Box<Expr>),
+    Return(ExprId),
     Constant(Constant),
-    Variable(Word),
-    BinaryOp(Box<Expr>, BinaryOperator, Box<Expr>),
+    Variable(VariableId),
+    BinaryOp(ExprId, BinaryOperator, ExprId),
     Block(Block),
-    //TODO: Allow stuff like block here?
-    If(Box<Expr>, Block),
+    //TODO: Test for block here
+    If(ExprId, Block),
     Call(Call),
 }
 
+#[derive(Clone, Copy)]
+pub struct VariableId(usize);
+
+#[derive(Clone, Copy)]
+pub struct ExprId(usize);
+
+#[derive(Clone, Copy)]
+//TODO pub field
+pub struct FunId(pub usize);
+
 pub struct Block {
-    statements: Vec<Expr>,
+    statements: Vec<ExprId>,
 }
 
 pub struct Call {
-    name: Word,
-    arguments: Vec<Expr>,
+    fun_id: FunId,
+    arguments: Vec<ExprId>,
 }
 
 impl Block {
-    fn new(statements: Vec<Expr>) -> Self {
+    fn new(statements: Vec<ExprId>) -> Self {
         Self { statements }
     }
 }
@@ -168,25 +182,26 @@ impl Variables {
         }
     }
 
-    fn set(&self) -> IndexSet<Word> {
-        self.set.keys().cloned().collect()
+    fn len(&self) -> usize {
+        self.set.len()
     }
 }
 
 pub struct VariableValues {
-    word_to_value: IndexMap<Word, Constant>,
+    values: Vec<Constant>,
 }
 
 impl VariableValues {
-    fn get(&self, word: &Word) -> Result<Constant, RuntimeError> {
-        self.word_to_value
-            .get(word)
-            .ok_or_else(|| RuntimeError::UnknownVariable(word.clone()))
+    fn get(&self, variable_id: &VariableId) -> Result<Constant, RuntimeError> {
+        self.values
+            .get(variable_id.0)
+            .ok_or_else(|| //RuntimeError::UnknownVariable(word.clone())
+                panic!("how"))
             .cloned()
     }
 
-    pub fn new(word_to_value: IndexMap<Word, Constant>) -> Self {
-        Self { word_to_value }
+    pub fn new(values: Vec<Constant>) -> Self {
+        Self { values }
     }
 }
 
@@ -316,20 +331,61 @@ pub enum ParseError {
     #[error("unexpected end of stream")]
     UnexpectedEndOfStream,
     #[error("variable '{0}' not defined")]
-    UndefinedVariable(Word),
+    NotDefinedVariable(Word),
     #[error("variable '{0}' already defined")]
     AlreadyDefinedVariable(Word),
     #[error("unexpected token '{0}' ({1})")]
     UnexpectedToken(Token, String),
     #[error("function '{0}' already defined")]
     AlreadyDefinedFunction(Word),
+    #[error("function '{0}' not defined")]
+    NotDefinedFunction(Word),
 }
 
-pub struct TokenStream {
-    tokens: Vec<Token>,
+pub struct Tokens(Vec<Token>);
+
+impl Tokens {
+    fn get(&self) -> &Vec<Token> {
+        &self.0
+    }
+
+    pub fn from_code(chars: &str) -> Result<Self, TokenizeError> {
+        let mut vec = Vec::new();
+
+        let mut p = Parsee::new(chars);
+
+        p.skip_whitespaces();
+
+        while let Some(token) = p.parse_token()? {
+            vec.push(token);
+        }
+
+        Ok(Self(vec))
+    }
+}
+
+pub struct TokenStream<'a> {
+    tokens: &'a Tokens,
     index: usize,
     #[expect(dead_code)]
     int_variables: IndexSet<Word>,
+    //TODO pub
+    pub expressions: Expressions,
+    fun_names: IndexSet<Word>,
+    stack: Stack,
+}
+
+impl<'a> TokenStream<'a> {
+    pub fn new(tokens: &'a Tokens) -> Self {
+        Self {
+            tokens,
+            index: 0,
+            int_variables: IndexSet::new(),
+            expressions: Expressions::new(),
+            fun_names: IndexSet::new(),
+            stack: Stack::new(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -375,13 +431,46 @@ enum FollowUp {
     End,
 }
 
-impl TokenStream {
+struct Stack {
+    variables: IndexSet<Word>,
+}
+impl Stack {
+    fn push(&mut self, word: Word) -> Result<VariableId, ParseError> {
+        let (res, was_inserted) = self.variables.insert_full(word);
+
+        if was_inserted {
+            Ok(VariableId(res))
+        } else {
+            Err(ParseError::AlreadyDefinedVariable(
+                self.variables
+                    .get_index(res)
+                    .expect("was not inserted")
+                    .clone(),
+            ))
+        }
+    }
+
+    fn new() -> Self {
+        Self {
+            variables: IndexSet::new(),
+        }
+    }
+
+    fn get(&self, word: &Word) -> Result<VariableId, ParseError> {
+        self.variables
+            .get_index_of(word)
+            .ok_or(ParseError::NotDefinedVariable(word.clone()))
+            .map(VariableId)
+    }
+}
+
+impl TokenStream<'_> {
     pub fn is_fully_parsed(&self) -> bool {
-        self.index == self.tokens.len()
+        self.index == self.tokens.get().len()
     }
 
     fn peek(&mut self) -> Option<Token> {
-        self.tokens.get(self.index).cloned()
+        self.tokens.get().get(self.index).cloned()
     }
 
     fn next(&mut self) -> Result<Token, ParseError> {
@@ -393,7 +482,7 @@ impl TokenStream {
     fn parse_until_stickyness(
         &mut self,
         stickyness_threshold: Stickyness,
-    ) -> Result<(Expr, FollowUp), ParseError> {
+    ) -> Result<(ExprId, FollowUp), ParseError> {
         let ast = self.parse_non_binary()?;
 
         let follow_up = self.parse_follow_up()?;
@@ -402,14 +491,15 @@ impl TokenStream {
             let stickyness = op.stickyness();
             if stickyness > stickyness_threshold {
                 let (rhs, follow_up) = self.parse_until_stickyness(stickyness_threshold)?;
-                return Ok((Expr::BinaryOp(Box::new(ast), op, Box::new(rhs)), follow_up));
+                let expr = Expr::BinaryOp(ast, op, rhs);
+                return Ok((self.expressions.add(expr), follow_up));
             }
         }
 
         Ok((ast, follow_up))
     }
 
-    fn parse_non_binary(&mut self) -> Result<Expr, ParseError> {
+    fn parse_non_binary(&mut self) -> Result<ExprId, ParseError> {
         let token = self.next()?;
 
         match token {
@@ -418,23 +508,34 @@ impl TokenStream {
                 self.expect(Token::ParanRight)?;
                 Ok(inner_expr)
             }
-            Token::Return => Ok(Expr::Return(Box::new(self.parse_expr()?))),
+            Token::Return => {
+                let expr = Expr::Return(self.parse_expr()?);
+                Ok(self.expressions.add(expr))
+            }
             //TODO: Should we use self.int_variables to reduce this to an id here?
             Token::Word(word) => {
                 if self.peek() == Some(Token::ParanLeft) {
-                    Ok(Expr::Call(Call {
-                        name: word,
-                        arguments: self.parse_expression_list(
-                            Token::ParanLeft,
-                            Token::Comma,
-                            Token::ParanRight,
-                        )?,
-                    }))
+                    let expr = Expr::Call(Call {
+                        fun_id: FunId(self.fun_names.insert_full(word).0),
+                        arguments: self
+                            .parse_expression_list_and_has_trailing_separator(
+                                Token::ParanLeft,
+                                Token::Comma,
+                                Token::ParanRight,
+                            )?
+                            .0,
+                    });
+
+                    Ok(self.expressions.add(expr))
                 } else {
-                    Ok(Expr::Variable(word))
+                    let expr = Expr::Variable(self.stack.get(&word)?);
+                    Ok(self.expressions.add(expr))
                 }
             }
-            Token::IntConstant(int_constant) => Ok(Expr::Constant(int_constant)),
+            Token::IntConstant(int_constant) => {
+                let expr = Expr::Constant(int_constant);
+                Ok(self.expressions.add(expr))
+            }
             _ => Err(ParseError::UnexpectedToken(
                 token,
                 "parse_non_binary".into(),
@@ -459,7 +560,7 @@ impl TokenStream {
         }
     }
 
-    pub fn parse_if(&mut self) -> Result<Expr, ParseError> {
+    pub fn parse_if(&mut self) -> Result<ExprId, ParseError> {
         self.expect(Token::If)?;
 
         let cond = self.parse_expr()?;
@@ -468,10 +569,11 @@ impl TokenStream {
 
         let if_block = self.parse_block()?;
 
-        Ok(Expr::If(Box::new(cond), if_block))
+        let expr = Expr::If(cond, if_block);
+        Ok(self.expressions.add(expr))
     }
 
-    pub fn parse_expr(&mut self) -> Result<Expr, ParseError> {
+    pub fn parse_expr(&mut self) -> Result<ExprId, ParseError> {
         if let Some(Token::If) = self.peek() {
             return self.parse_if();
         }
@@ -481,7 +583,8 @@ impl TokenStream {
 
         while let FollowUp::BinaryOperator(op) = follow_up {
             let (rhs, new_follow_up) = self.parse_until_stickyness(op.stickyness())?;
-            ast = Expr::BinaryOp(Box::new(ast), op, Box::new(rhs));
+            let expr = Expr::BinaryOp(ast, op, rhs);
+            ast = self.expressions.add(expr);
             follow_up = new_follow_up;
         }
         Ok(ast)
@@ -543,6 +646,9 @@ impl TokenStream {
     pub fn parse_fun(&mut self) -> Result<Fun, ParseError> {
         self.expect(Token::Fun)?;
 
+        //TODO Meh.
+        assert!(self.stack.variables.is_empty());
+
         let name = self.expect_word()?;
 
         let variables = self.parse_parameters()?;
@@ -550,7 +656,14 @@ impl TokenStream {
         self.expect(Token::Arrow)?;
         let ty = self.expect_type()?;
 
+        for variable in variables.set.keys() {
+            //TODO Test error
+            self.stack.push(variable.clone())?;
+        }
+
         let body = self.parse_block()?;
+
+        self.stack.variables.clear();
 
         Ok(Fun::new(name, variables, ty, body))
     }
@@ -562,15 +675,17 @@ impl TokenStream {
         }
     }
 
-    fn parse_expression_list(
+    fn parse_expression_list_and_has_trailing_separator(
         &mut self,
         left_token: Token,
         separator_token: Token,
         right_token: Token,
-    ) -> Result<Vec<Expr>, ParseError> {
+    ) -> Result<(Vec<ExprId>, bool), ParseError> {
         self.expect(left_token)?;
 
         let mut statements = Vec::new();
+
+        let mut has_trailing_separator = false;
 
         loop {
             if self.entertain(right_token.clone()) {
@@ -578,48 +693,51 @@ impl TokenStream {
             }
 
             if self.entertain(separator_token.clone()) {
+                has_trailing_separator = true;
                 continue;
             }
 
             statements.push(self.parse_expr()?);
+            has_trailing_separator = false;
         }
 
-        Ok(statements)
+        Ok((statements, has_trailing_separator))
     }
 
     fn parse_block(&mut self) -> Result<Block, ParseError> {
-        let _ = self.expect(Token::BraceLeft);
+        let (mut statements, has_trailing_separator) = self
+            .parse_expression_list_and_has_trailing_separator(
+                Token::BraceLeft,
+                Token::Semicolon,
+                Token::BraceRight,
+            )?;
 
-        let mut statements = Vec::new();
-
-        loop {
-            if self.entertain(Token::BraceRight) {
-                break;
-            }
-
-            if self.entertain(Token::Semicolon) {
-                continue;
-            }
-
-            statements.push(self.parse_expr()?);
+        if has_trailing_separator {
+            let expr = Expr::Constant(Constant::None);
+            statements.push(self.expressions.add(expr));
         }
 
         Ok(Block::new(statements))
     }
+}
 
-    pub fn parse(mut self) -> Result<Ast, ParseError> {
-        let mut funs = IndexMap::new();
+impl Tokens {
+    pub fn parse(&self) -> Result<Ast, ParseError> {
+        let mut fun_set = IndexMap::new();
+
+        let mut ts = TokenStream::new(self);
 
         loop {
-            match self.peek() {
+            match ts.peek() {
                 None => break,
                 Some(Token::Fun) => {
-                    let fun = self.parse_fun()?;
-                    match funs.entry(fun.name.clone()) {
+                    let fun: Fun = ts.parse_fun()?;
+                    match fun_set.entry(fun.name.clone()) {
                         Entry::Occupied(_) => {
                             return Err(ParseError::AlreadyDefinedFunction(fun.name))
                         }
                         Entry::Vacant(vacant_entry) => {
+                            ts.fun_names.insert(fun.name.clone());
                             vacant_entry.insert(fun);
                         }
                     }
@@ -634,20 +752,58 @@ impl TokenStream {
         }
 
         // This should be implicit by the above code.
-        assert!(self.is_fully_parsed());
+        assert!(ts.is_fully_parsed());
 
-        Ok(Ast::new(funs))
+        let entry_point = ts.fun_names.get_index_of(&*MAIN).map(FunId);
+        //TODO: Verify that there are no arguments for main?
+
+        let mut funs = Vec::new();
+        for name in ts.fun_names {
+            funs.push(
+                fun_set
+                    .swap_remove(&name)
+                    .ok_or(ParseError::NotDefinedFunction(name))?,
+            );
+        }
+
+        Ok(Ast::new(funs, ts.expressions, entry_point))
+    }
+}
+
+pub struct Expressions {
+    vec: Vec<Expr>,
+}
+impl Expressions {
+    fn new() -> Self {
+        Self { vec: Vec::new() }
+    }
+
+    fn add(&mut self, expr: Expr) -> ExprId {
+        let res = ExprId(self.vec.len());
+        self.vec.push(expr);
+        res
+    }
+
+    fn get(&self, expr_id: ExprId) -> &Expr {
+        &self.vec[expr_id.0]
     }
 }
 
 pub struct Ast {
-    funs: IndexMap<Word, Fun>,
+    funs: Vec<Fun>,
+    expressions: Expressions,
+    entry_point: Option<FunId>,
 }
 
 impl Ast {
-    fn new(funs: IndexMap<Word, Fun>) -> Self {
-        Self { funs }
+    pub fn to_code(&self) -> String {
+        todo!()
+        // for fun in self.funs {}
     }
+
+    // fn new(funs: IndexMap<Word, Fun>) -> Self {
+    //     Self { funs }
+    // }
 
     fn evaluate_block(
         &self,
@@ -661,30 +817,33 @@ impl Ast {
         for statement in
             &block.statements[..block.statements.len().checked_sub(1).expect("not empty")]
         {
-            let eval = self.evaluate_expr(statement, variable_values)?;
+            let eval = self.evaluate_expr(*statement, variable_values)?;
             let Some(_) = eval.some_or_please_return() else {
                 return Ok(eval);
             };
         }
 
-        self.evaluate_expr(block.statements.last().expect("not empty"), variable_values)
+        self.evaluate_expr(
+            *block.statements.last().expect("not empty"),
+            variable_values,
+        )
     }
 
     fn evaluate_expr(
         &self,
-        expr: &Expr,
+        expr_id: ExprId,
         variable_values: &VariableValues,
     ) -> Result<Evaluation, RuntimeError> {
-        match expr {
+        match self.expressions.get(expr_id) {
             Expr::Constant(int_constant) => Ok((*int_constant).into()),
-            Expr::Variable(word) => Ok(variable_values.get(word)?.into()),
+            Expr::Variable(variable_id) => Ok(variable_values.get(variable_id)?.into()),
             Expr::BinaryOp(lhs_expr, op, rhs_expr) => {
-                let lhs = self.evaluate_expr(lhs_expr, variable_values)?;
+                let lhs = self.evaluate_expr(*lhs_expr, variable_values)?;
                 let Some(lhs) = lhs.some_or_please_return() else {
                     return Ok(lhs);
                 };
 
-                let rhs = self.evaluate_expr(rhs_expr, variable_values)?;
+                let rhs = self.evaluate_expr(*rhs_expr, variable_values)?;
                 let Some(rhs) = rhs.some_or_please_return() else {
                     return Ok(rhs);
                 };
@@ -693,10 +852,10 @@ impl Ast {
             }
             Expr::Block(block) => self.evaluate_block(block, variable_values),
             Expr::Return(expr) => self
-                .evaluate_expr(expr, variable_values)
+                .evaluate_expr(*expr, variable_values)
                 .map(|evaluation| evaluation.returning()),
             Expr::If(expr, block) => {
-                let eval = self.evaluate_expr(expr, variable_values)?;
+                let eval = self.evaluate_expr(*expr, variable_values)?;
                 let Some(constant) = eval.some_or_please_return() else {
                     return Ok(eval);
                 };
@@ -715,58 +874,76 @@ impl Ast {
             Expr::Call(call) => {
                 let mut parameters = Vec::new();
                 for argument in &call.arguments {
-                    let eval = self.evaluate_expr(argument, variable_values)?;
+                    let eval = self.evaluate_expr(*argument, variable_values)?;
                     let Some(parameter) = eval.some_or_please_return() else {
                         return Ok(eval);
                     };
 
                     parameters.push(parameter);
                 }
-                self.evaluate_fun(&call.name, parameters).map(|c| c.into())
+                self.evaluate_fun(call.fun_id, parameters).map(|c| c.into())
             }
         }
     }
 
     pub fn evaluate_fun(
         &self,
-        name: &Word,
+        fun_id: FunId,
         parameters: Vec<Constant>,
     ) -> Result<Constant, RuntimeError> {
         let fun = self
             .funs
-            .get(name)
-            .ok_or_else(|| RuntimeError::UnknownFunction(name.clone()))?;
+            .get(fun_id.0)
+            .unwrap() //TODO
+            // .ok_or_else(|| RuntimeError::UnknownFunction(name.clone()))?
+            ;
 
-        let mut word_to_value = IndexMap::new();
-
-        let variable_names = fun.variables.set();
-
-        if variable_names.len() != parameters.len() {
+        if fun.variables.len() != parameters.len() {
             return Err(RuntimeError::IncompatibleParameters(
                 parameters,
                 fun.variables.clone(),
             ));
         }
 
-        for (word, constant) in fun.variables.set().into_iter().zip(parameters) {
-            let old = word_to_value.insert(word, constant);
-            assert!(old.is_none());
+        let variable_values = VariableValues::new(parameters);
+
+        let result = self
+            .evaluate_block(&fun.body, &variable_values)?
+            .unwrap_on_outer_layer();
+
+        if result.ty() != fun.ty {
+            return Err(RuntimeError::WrongReturnType(
+                fun.name.clone(),
+                fun.ty,
+                result.ty(),
+            ));
         }
 
-        let variable_values = VariableValues::new(word_to_value);
-
-        Ok(self
-            .evaluate_block(&fun.body, &variable_values)?
-            .unwrap_on_outer_layer())
+        Ok(result)
     }
 
     pub fn evaluate_main(&self) -> Result<Constant, RuntimeError> {
-        self.evaluate_fun(&MAIN, Vec::new())
+        self.evaluate_fun(
+            self.entry_point.ok_or(RuntimeError::NoEntryPoint)?,
+            Vec::new(),
+        )
+    }
+
+    fn new(funs: Vec<Fun>, expressions: Expressions, entry_point: Option<FunId>) -> Self {
+        Self {
+            funs,
+            expressions,
+            entry_point,
+        }
     }
 }
 
 //TODO: Type deduce
-pub fn evaluate_debug(expr: Expr, ty: Ty) -> Result<Constant, RuntimeError> {
+pub fn evaluate_debug(
+    expr_id: ExprId,
+    ty: Ty,
+    expressions: Expressions,
+) -> Result<Constant, RuntimeError> {
     let name = MAIN.clone();
 
     let main = Fun::new(
@@ -774,11 +951,11 @@ pub fn evaluate_debug(expr: Expr, ty: Ty) -> Result<Constant, RuntimeError> {
         Variables::new(),
         ty,
         Block {
-            statements: vec![expr],
+            statements: vec![expr_id],
         },
     );
 
-    let ast = Ast::new(indexmap! { name => main});
+    let ast = Ast::new(vec![main], expressions, Some(FunId(0)));
 
     ast.evaluate_main()
 }
@@ -788,7 +965,6 @@ static MAIN: LazyLock<Word> = LazyLock::new(|| "main".try_into().expect("valid w
 pub struct Fun {
     name: Word,
     variables: Variables,
-    #[expect(dead_code)] //TODO
     ty: Ty,
     body: Block,
 }
@@ -823,24 +999,6 @@ pub enum TokenizeError {
 
     #[error("invalid word: '{0}'")]
     InvalidWord(String),
-}
-
-pub fn tokenize(chars: &str) -> Result<TokenStream, TokenizeError> {
-    let mut vec = Vec::new();
-
-    let mut p = Parsee::new(chars);
-
-    p.skip_whitespaces();
-
-    while let Some(token) = p.parse_token()? {
-        vec.push(token);
-    }
-
-    Ok(TokenStream {
-        tokens: vec,
-        index: 0,
-        int_variables: IndexSet::new(),
-    })
 }
 
 struct Parsee<'a> {
@@ -1008,7 +1166,7 @@ pub mod word {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
 pub enum Ty {
     Int,
     Bool,

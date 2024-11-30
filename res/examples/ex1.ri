@@ -7,8 +7,12 @@ fun complex(n: int) -> bool {
     val res: bool = true;
     while m > n {
         res = !res;
-        m /= 2;
+        m /= add(1, 1);
     }
 
     res
+}
+
+fun main(n: int) {
+    return complex(n + n)
 }

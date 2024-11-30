@@ -1,16 +1,18 @@
-use ri::parse::{evaluate_debug, tokenize, Constant, IntConstant, Ty};
+use ri::parse::{evaluate_debug, Constant, FunId, IntConstant, TokenStream, Tokens, Ty};
 
 #[test]
 fn punkt_vor_strich() {
     let s = "   1+2* 3     ";
 
-    let mut tokens = tokenize(s).unwrap();
+    let tokens = Tokens::from_code(s).unwrap();
 
-    let expr = tokens.parse_expr().unwrap();
+    let mut ts = TokenStream::new(&tokens);
 
-    assert!(tokens.is_fully_parsed());
+    let expr = ts.parse_expr().unwrap();
 
-    let value = evaluate_debug(expr, Ty::Int).unwrap();
+    assert!(ts.is_fully_parsed());
+
+    let value = evaluate_debug(expr, Ty::Int, ts.expressions).unwrap();
 
     assert_eq!(value, Constant::Int(IntConstant::Small(7)));
 }
@@ -19,13 +21,15 @@ fn punkt_vor_strich() {
 fn punkt_vor_strich_ändert_nix() {
     let s = "1 *2 +3";
 
-    let mut tokens = tokenize(s).unwrap();
+    let tokens = Tokens::from_code(s).unwrap();
 
-    let ast = tokens.parse_expr().unwrap();
+    let mut ts = TokenStream::new(&tokens);
 
-    assert!(tokens.is_fully_parsed());
+    let expr = ts.parse_expr().unwrap();
 
-    let value = evaluate_debug(ast, Ty::Int).unwrap();
+    assert!(ts.is_fully_parsed());
+
+    let value = evaluate_debug(expr, Ty::Int, ts.expressions).unwrap();
 
     assert_eq!(value, Constant::Int(IntConstant::Small(5)));
 }
@@ -34,13 +38,15 @@ fn punkt_vor_strich_ändert_nix() {
 fn punkt_strich_punkt() {
     let s = " 0 * 10+10 * 0 ";
 
-    let mut tokens = tokenize(s).unwrap();
+    let tokens = Tokens::from_code(s).unwrap();
 
-    let ast = tokens.parse_expr().unwrap();
+    let mut ts = TokenStream::new(&tokens);
 
-    assert!(tokens.is_fully_parsed());
+    let expr = ts.parse_expr().unwrap();
 
-    let value = evaluate_debug(ast, Ty::Int).unwrap();
+    assert!(ts.is_fully_parsed());
+
+    let value = evaluate_debug(expr, Ty::Int, ts.expressions).unwrap();
 
     assert_eq!(value, Constant::Int(IntConstant::Small(0)));
 }
@@ -52,13 +58,15 @@ fn strich_punkt_strich() {
     
     + 4";
 
-    let mut tokens = tokenize(s).unwrap();
+    let tokens = Tokens::from_code(s).unwrap();
 
-    let ast = tokens.parse_expr().unwrap();
+    let mut ts = TokenStream::new(&tokens);
 
-    assert!(tokens.is_fully_parsed());
+    let expr = ts.parse_expr().unwrap();
 
-    let value = evaluate_debug(ast, Ty::Int).unwrap();
+    assert!(ts.is_fully_parsed());
+
+    let value = evaluate_debug(expr, Ty::Int, ts.expressions).unwrap();
 
     assert_eq!(value, Constant::Int(IntConstant::Small(105)));
 }
@@ -67,13 +75,15 @@ fn strich_punkt_strich() {
 fn minus_minus() {
     let s = " 10 - 1 -\t\n 1";
 
-    let mut tokens = tokenize(s).unwrap();
+    let tokens = Tokens::from_code(s).unwrap();
 
-    let ast = tokens.parse_expr().unwrap();
+    let mut ts = TokenStream::new(&tokens);
 
-    assert!(tokens.is_fully_parsed());
+    let expr = ts.parse_expr().unwrap();
 
-    let value = evaluate_debug(ast, Ty::Int).unwrap();
+    assert!(ts.is_fully_parsed());
+
+    let value = evaluate_debug(expr, Ty::Int, ts.expressions).unwrap();
 
     assert_eq!(value, Constant::Int(IntConstant::Small(8)));
 }
@@ -88,13 +98,13 @@ fn fun_sum() {
     
     ";
 
-    let tokens = tokenize(s).unwrap();
+    let tokens = Tokens::from_code(s).unwrap();
 
     let ast = tokens.parse().unwrap();
 
     let value = ast
         .evaluate_fun(
-            &"sum".try_into().unwrap(),
+            FunId(0),
             vec![
                 Constant::Int(IntConstant::Small(4)),
                 Constant::Int(IntConstant::Small(5)),
