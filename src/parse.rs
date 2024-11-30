@@ -38,16 +38,28 @@ pub enum IntConstant {
     Small(i128),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Constant {
     Int(IntConstant),
     Bool(bool),
     None,
+    List(Vec<Constant>),
 }
+
 impl Constant {
-    fn get_bool(self) -> Result<bool, RuntimeError> {
+    fn default(ty: Ty) -> Constant {
+        match ty {
+            Ty::Int => Constant::Int(IntConstant::Small(0)),
+            Ty::Bool => Constant::Bool(false),
+            Ty::None => Constant::None,
+            Ty::List => Constant::List(Vec::new()),
+            Ty::Range => todo!(),
+        }
+    }
+
+    fn get_bool(&self) -> Result<bool, RuntimeError> {
         if let Constant::Bool(b) = self {
-            Ok(b)
+            Ok(*b)
         } else {
             let actual = self.ty();
             let expected = Ty::Bool;
@@ -61,6 +73,7 @@ impl Constant {
             Constant::Int(_) => Ty::Int,
             Constant::Bool(_) => Ty::Bool,
             Constant::None => Ty::None,
+            Constant::List(_) => Ty::List,
         }
     }
 }
@@ -79,6 +92,8 @@ impl Display for Constant {
             Constant::Int(int) => write!(f, "{int}"),
             Constant::Bool(b) => write!(f, "{b}"),
             Constant::None => write!(f, "()"),
+            //TODO make it good
+            Constant::List(vec) => write!(f, "{vec:?}"),
         }
     }
 }
@@ -122,7 +137,7 @@ impl Add for IntConstant {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub enum Expr {
     Return(ExprId),
     Constant(Constant),
@@ -132,6 +147,8 @@ pub enum Expr {
     //TODO: Test for block here
     If(ExprId, Block),
     Call(Call),
+    Assign(VariableId, ExprId),
+    Introduce(VariableId, ExprId),
 }
 
 #[derive(Clone, Copy)]
@@ -227,15 +244,15 @@ impl Evaluation {
         }
     }
 
-    fn unwrap_on_outer_layer(&self) -> Constant {
+    fn unwrap_on_outer_layer(self) -> Constant {
         self.value
     }
 
-    fn some_or_please_return(&self) -> Option<Constant> {
+    fn some_or_please_return(&self) -> Option<&Constant> {
         if self.returning {
             None
         } else {
-            Some(self.value)
+            Some(&self.value)
         }
     }
 }
@@ -394,6 +411,15 @@ impl<'a> TokenStream<'a> {
             stack: Stack::new(),
         }
     }
+
+    fn parse_static(&mut self, ty: Ty) -> Result<Expr, ParseError> {
+        if self.entertain(Token::ParanLeft) {
+            self.expect(Token::ParanRight)?;
+            return Ok(Expr::Constant(Constant::default(ty)));
+        }
+
+        todo!()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -470,6 +496,15 @@ impl Stack {
             .ok_or(ParseError::NotDefinedVariable(word.clone()))
             .map(VariableId)
     }
+
+    fn len(&self) -> usize {
+        self.variables.len()
+    }
+
+    fn cut_back_to(&mut self, old_stack_size: usize) {
+        assert!(old_stack_size <= self.variables.len());
+        self.variables.truncate(old_stack_size);
+    }
 }
 
 impl TokenStream<'_> {
@@ -516,18 +551,19 @@ impl TokenStream<'_> {
                 self.expect(Token::ParanRight)?;
                 Ok(inner_expr)
             }
+            Token::Ty(ty) => self.parse_static(ty),
             Token::Return => {
                 let expr = self.parse_expr()?;
                 let expr = Expr::Return(self.expressions.add(expr));
                 Ok(expr)
             }
-            //TODO: Should we use self.int_variables to reduce this to an id here?
             Token::Word(word) => {
                 if self.peek() == Some(Token::ParanLeft) {
                     let (exprs, _) = self.parse_expression_list_and_has_trailing_separator(
                         Token::ParanLeft,
                         Token::Comma,
                         Token::ParanRight,
+                        false,
                     )?;
                     let arguments = self.expressions.add_range(exprs);
 
@@ -640,7 +676,7 @@ impl TokenStream<'_> {
         loop {
             let name = self.expect_word()?;
             self.expect(Token::Colon)?;
-            let ty = self.expect_type()?;
+            let ty = self.expect_ty()?;
             variables.insert_new(Variable::new(name, ty))?;
 
             if self.entertain(Token::ParanRight) {
@@ -664,7 +700,7 @@ impl TokenStream<'_> {
         let variables = self.parse_parameters()?;
 
         self.expect(Token::Arrow)?;
-        let ty = self.expect_type()?;
+        let ty = self.expect_ty()?;
 
         for variable in variables.set.keys() {
             //TODO Test error
@@ -678,7 +714,7 @@ impl TokenStream<'_> {
         Ok(Fun::new(name, variables, ty, body))
     }
 
-    fn expect_type(&mut self) -> Result<Ty, ParseError> {
+    fn expect_ty(&mut self) -> Result<Ty, ParseError> {
         match self.next()? {
             Token::Ty(word) => Ok(word),
             token => Err(ParseError::UnexpectedToken(token, "expected a type".into())),
@@ -690,6 +726,7 @@ impl TokenStream<'_> {
         left_token: Token,
         separator_token: Token,
         right_token: Token,
+        allow_variable_introduction: bool,
     ) -> Result<(Vec<Expr>, bool), ParseError> {
         self.expect(left_token)?;
 
@@ -707,6 +744,20 @@ impl TokenStream<'_> {
                 continue;
             }
 
+            if allow_variable_introduction && self.entertain(Token::Val) {
+                let name = self.expect_word()?;
+                self.expect(Token::Colon)?;
+                //TODO Use type info
+                let _ty = self.expect_ty()?;
+                self.expect(Token::Equals)?;
+                let expr = self.parse_expr()?;
+
+                let variable_id = self.stack.push(name)?;
+
+                statements.push(Expr::Introduce(variable_id, self.expressions.add(expr)));
+                continue;
+            }
+
             statements.push(self.parse_expr()?);
             has_trailing_separator = false;
         }
@@ -715,12 +766,16 @@ impl TokenStream<'_> {
     }
 
     fn parse_block(&mut self) -> Result<Block, ParseError> {
+        let old_stack_size = self.stack.len();
         let (mut statements, has_trailing_separator) = self
             .parse_expression_list_and_has_trailing_separator(
                 Token::BraceLeft,
                 Token::Semicolon,
                 Token::BraceRight,
+                true,
             )?;
+
+        self.stack.cut_back_to(old_stack_size);
 
         if has_trailing_separator {
             let expr = Expr::Constant(Constant::None);
@@ -838,11 +893,13 @@ impl Ast {
     fn evaluate_block(
         &self,
         block: &Block,
-        variable_values: &VariableValues,
+        variable_values: &mut VariableValues,
     ) -> Result<Evaluation, RuntimeError> {
         let Some(last_id) = block.statements.end.0.checked_sub(1) else {
             return Ok(Constant::None.into());
         };
+
+        let old_size = variable_values.values.len();
 
         for id in block.statements.start.0..last_id {
             let expr_id = ExprId(id);
@@ -852,16 +909,19 @@ impl Ast {
             };
         }
 
-        self.evaluate_expr(ExprId(last_id), variable_values)
+        let res = self.evaluate_expr(ExprId(last_id), variable_values)?;
+        assert!(old_size <= variable_values.values.len());
+        variable_values.values.truncate(old_size);
+        Ok(res)
     }
 
     fn evaluate_expr(
         &self,
         expr_id: ExprId,
-        variable_values: &VariableValues,
+        variable_values: &mut VariableValues,
     ) -> Result<Evaluation, RuntimeError> {
         match self.expressions.get(expr_id) {
-            Expr::Constant(int_constant) => Ok((*int_constant).into()),
+            Expr::Constant(int_constant) => Ok(int_constant.clone().into()),
             Expr::Variable(variable_id) => Ok(variable_values.get(variable_id)?.into()),
             Expr::BinaryOp(lhs_expr, op, rhs_expr) => {
                 let lhs = self.evaluate_expr(*lhs_expr, variable_values)?;
@@ -874,7 +934,7 @@ impl Ast {
                     return Ok(rhs);
                 };
 
-                Ok(combine_with_operator(lhs, *op, rhs)?.into())
+                Ok(combine_with_operator(lhs.clone(), *op, rhs.clone())?.into())
             }
             Expr::Block(block) => self.evaluate_block(block, variable_values),
             Expr::Return(expr) => self
@@ -905,9 +965,23 @@ impl Ast {
                         return Ok(eval);
                     };
 
-                    parameters.push(parameter);
+                    parameters.push(parameter.clone());
                 }
                 self.evaluate_fun(call.fun_id, parameters).map(|c| c.into())
+            }
+            Expr::Assign(_variable_id, _expr_id) => todo!(),
+            Expr::Introduce(variable_id, expr_id) => {
+                assert_eq!(variable_values.values.len(), variable_id.0);
+
+                //TODO: let a = { let b = and then order?
+
+                let eval = self.evaluate_expr(*expr_id, variable_values)?;
+                let Some(expr) = eval.some_or_please_return() else {
+                    return Ok(eval);
+                };
+
+                variable_values.values.push(expr.clone());
+                Ok(expr.clone().into())
             }
         }
     }
@@ -931,11 +1005,14 @@ impl Ast {
             ));
         }
 
-        let variable_values = VariableValues::new(parameters);
+        let mut variable_values = VariableValues::new(parameters);
+        let initial_size = variable_values.values.len();
 
         let result = self
-            .evaluate_block(&fun.body, &variable_values)?
+            .evaluate_block(&fun.body, &mut variable_values)?
             .unwrap_on_outer_layer();
+
+        assert_eq!(variable_values.values.len(), initial_size);
 
         if result.ty() != fun.ty {
             return Err(RuntimeError::WrongReturnType(
@@ -1020,11 +1097,8 @@ impl Variable {
 
 #[derive(Debug, Error)]
 pub enum TokenizeError {
-    #[error("unknown token'{0}'")]
-    UnknownToken(String),
     #[error("unknown character: '{0}'")]
     UnknownCharacter(char),
-
     #[error("invalid word: '{0}'")]
     InvalidWord(String),
 }
@@ -1038,7 +1112,18 @@ struct Parsee {
 }
 
 impl Parsee {
-    fn peek(&mut self) -> Option<char> {
+    fn skip_if_end_of_line(&mut self) {
+        while self
+            .lines
+            .get(self.current_line_id)
+            .is_some_and(|line| line.len() == self.current_char_id)
+        {
+            self.current_line_id += 1;
+            self.current_char_id = 0;
+        }
+    }
+
+    fn peek(&self) -> Option<char> {
         self.lines
             .get(self.current_line_id)
             .map(|line| line[self.current_char_id])
@@ -1048,26 +1133,21 @@ impl Parsee {
         let c = self.peek()?;
 
         self.current_char_id += 1;
-        if self.lines[self.current_line_id].len() == self.current_char_id {
-            self.current_line_id += 1;
-            self.current_char_id = 0;
-        }
+        self.skip_if_end_of_line();
 
         Some(c)
     }
 
     fn new(chars: &str, filename: String) -> Self {
-        let lines = chars
-            .lines()
-            .filter(|line| !line.is_empty())
-            .map(|line| line.chars().collect())
-            .collect();
-        Self {
+        let lines = chars.lines().map(|line| line.chars().collect()).collect();
+        let mut res = Self {
             lines,
             current_line_id: 0,
             current_char_id: 0,
             filename,
-        }
+        };
+        res.skip_if_end_of_line();
+        res
     }
 
     fn skip_whitespaces(&mut self) {
@@ -1103,6 +1183,11 @@ impl Parsee {
         let Some(start) = self.next() else {
             return Ok(None);
         };
+
+        if start == '/' && self.peek() == Some('/') {
+            self.skip_rest_of_line();
+            return self.parse_token();
+        }
 
         if let Some(token) = SINGLE_DIGIT_TOKEN_MAP.get(&start) {
             if matches!(token, Token::BinaryOperator(BinaryOperator::Minus))
@@ -1147,17 +1232,22 @@ impl Parsee {
             self.filename.clone(),
             self.current_line_id,
             self.current_char_id,
-            self.current_line(),
+            self.current_line_to_string(),
             error,
         )
     }
 
-    fn current_line(&self) -> String {
+    fn current_line_to_string(&self) -> String {
         self.lines
             .get(self.current_line_id)
             .expect("hopefully only called when still pointing to something")
             .iter()
             .collect()
+    }
+
+    fn skip_rest_of_line(&mut self) {
+        self.current_char_id = self.lines[self.current_line_id].len();
+        self.skip_if_end_of_line();
     }
 }
 
@@ -1218,6 +1308,8 @@ static SINGLE_DIGIT_TOKEN_MAP: LazyLock<IndexMap<char, Token>> = std::sync::Lazy
         '{' => Token::BraceLeft,
         '}' => Token::BraceRight,
         ':' => Token::Colon,
+        '=' => Token::Equals,
+        '.' => Token::Dot,
 
     }
 });
@@ -1226,9 +1318,12 @@ static KEYWORD_TOKEN_MAP: LazyLock<IndexMap<&str, Token>> = std::sync::LazyLock:
     indexmap! {
         "fun" => Token::Fun,
         "return" => Token::Return,
+        "List" => Token::Ty(Ty::List),
+        "Range" => Token::Ty(Ty::Range),
         "int" => Token::Ty(Ty::Int),
         "if" => Token::If,
         "call" => Token::Call,
+        "val" => Token::Val,
     }
 });
 
@@ -1283,13 +1378,17 @@ pub enum Ty {
     Int,
     Bool,
     None,
+    List,
+    Range,
 }
 
 impl Display for Ty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Ty::List => write!(f, "List"),
             Ty::Int => write!(f, "int"),
             Ty::Bool => write!(f, "bool"),
+            Ty::Range => write!(f, "Range"),
             Ty::None => write!(f, "()"),
         }
     }
@@ -1306,13 +1405,16 @@ pub enum Token {
     Colon,
     Arrow,
     Comma,
+    Equals,
     ParanLeft,
     ParanRight,
     BraceLeft,
     BraceRight,
     Fun,
+    Val,
     If,
     Call,
+    Dot,
 }
 
 impl Display for Token {
@@ -1334,6 +1436,9 @@ impl Display for Token {
             Token::Fun => write!(f, "fun"),
             Token::If => write!(f, "if"),
             Token::Call => write!(f, "call"),
+            Token::Equals => write!(f, "="),
+            Token::Dot => write!(f, "."),
+            Token::Val => write!(f, "val"),
         }
     }
 }

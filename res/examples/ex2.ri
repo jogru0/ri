@@ -4,7 +4,9 @@ fun fib(n: int) -> int {
     //     return n;
     // };
 
-    val mem: List(int) = List();
+
+    // TODO maybe List(int)
+    val mem: List = List();
 
     mem.push(0);
     mem.push(1);
