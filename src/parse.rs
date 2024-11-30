@@ -1,9 +1,8 @@
 use std::{
     cmp::Ordering,
+    error::Error,
     fmt::Display,
-    iter::Peekable,
     ops::{Add, Mul, Sub},
-    str::Chars,
     sync::LazyLock,
 };
 
@@ -123,6 +122,7 @@ impl Add for IntConstant {
     }
 }
 
+#[derive(Clone, Copy)]
 pub enum Expr {
     Return(ExprId),
     Constant(Constant),
@@ -137,24 +137,32 @@ pub enum Expr {
 #[derive(Clone, Copy)]
 pub struct VariableId(usize);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExprId(usize);
 
 #[derive(Clone, Copy)]
 //TODO pub field
 pub struct FunId(pub usize);
 
-pub struct Block {
-    statements: Vec<ExprId>,
+#[derive(Clone, Copy)]
+pub struct ExprRange {
+    start: ExprId,
+    end: ExprId,
 }
 
+#[derive(Clone, Copy)]
+pub struct Block {
+    statements: ExprRange,
+}
+
+#[derive(Clone, Copy)]
 pub struct Call {
     fun_id: FunId,
-    arguments: Vec<ExprId>,
+    arguments: ExprRange,
 }
 
 impl Block {
-    fn new(statements: Vec<ExprId>) -> Self {
+    fn new(statements: ExprRange) -> Self {
         Self { statements }
     }
 }
@@ -349,10 +357,10 @@ impl Tokens {
         &self.0
     }
 
-    pub fn from_code(chars: &str) -> Result<Self, TokenizeError> {
+    pub fn from_code(chars: &str, filename: String) -> Result<Self, SourceTokenizeError> {
         let mut vec = Vec::new();
 
-        let mut p = Parsee::new(chars);
+        let mut p = Parsee::new(chars, filename);
 
         p.skip_whitespaces();
 
@@ -482,7 +490,7 @@ impl TokenStream<'_> {
     fn parse_until_stickyness(
         &mut self,
         stickyness_threshold: Stickyness,
-    ) -> Result<(ExprId, FollowUp), ParseError> {
+    ) -> Result<(Expr, FollowUp), ParseError> {
         let ast = self.parse_non_binary()?;
 
         let follow_up = self.parse_follow_up()?;
@@ -491,15 +499,15 @@ impl TokenStream<'_> {
             let stickyness = op.stickyness();
             if stickyness > stickyness_threshold {
                 let (rhs, follow_up) = self.parse_until_stickyness(stickyness_threshold)?;
-                let expr = Expr::BinaryOp(ast, op, rhs);
-                return Ok((self.expressions.add(expr), follow_up));
+                let expr = Expr::BinaryOp(self.expressions.add(ast), op, self.expressions.add(rhs));
+                return Ok((expr, follow_up));
             }
         }
 
         Ok((ast, follow_up))
     }
 
-    fn parse_non_binary(&mut self) -> Result<ExprId, ParseError> {
+    fn parse_non_binary(&mut self) -> Result<Expr, ParseError> {
         let token = self.next()?;
 
         match token {
@@ -509,32 +517,34 @@ impl TokenStream<'_> {
                 Ok(inner_expr)
             }
             Token::Return => {
-                let expr = Expr::Return(self.parse_expr()?);
-                Ok(self.expressions.add(expr))
+                let expr = self.parse_expr()?;
+                let expr = Expr::Return(self.expressions.add(expr));
+                Ok(expr)
             }
             //TODO: Should we use self.int_variables to reduce this to an id here?
             Token::Word(word) => {
                 if self.peek() == Some(Token::ParanLeft) {
+                    let (exprs, _) = self.parse_expression_list_and_has_trailing_separator(
+                        Token::ParanLeft,
+                        Token::Comma,
+                        Token::ParanRight,
+                    )?;
+                    let arguments = self.expressions.add_range(exprs);
+
                     let expr = Expr::Call(Call {
                         fun_id: FunId(self.fun_names.insert_full(word).0),
-                        arguments: self
-                            .parse_expression_list_and_has_trailing_separator(
-                                Token::ParanLeft,
-                                Token::Comma,
-                                Token::ParanRight,
-                            )?
-                            .0,
+                        arguments,
                     });
 
-                    Ok(self.expressions.add(expr))
+                    Ok(expr)
                 } else {
                     let expr = Expr::Variable(self.stack.get(&word)?);
-                    Ok(self.expressions.add(expr))
+                    Ok(expr)
                 }
             }
             Token::IntConstant(int_constant) => {
                 let expr = Expr::Constant(int_constant);
-                Ok(self.expressions.add(expr))
+                Ok(expr)
             }
             _ => Err(ParseError::UnexpectedToken(
                 token,
@@ -560,7 +570,7 @@ impl TokenStream<'_> {
         }
     }
 
-    pub fn parse_if(&mut self) -> Result<ExprId, ParseError> {
+    pub fn parse_if(&mut self) -> Result<Expr, ParseError> {
         self.expect(Token::If)?;
 
         let cond = self.parse_expr()?;
@@ -569,11 +579,11 @@ impl TokenStream<'_> {
 
         let if_block = self.parse_block()?;
 
-        let expr = Expr::If(cond, if_block);
-        Ok(self.expressions.add(expr))
+        let expr = Expr::If(self.expressions.add(cond), if_block);
+        Ok(expr)
     }
 
-    pub fn parse_expr(&mut self) -> Result<ExprId, ParseError> {
+    pub fn parse_expr(&mut self) -> Result<Expr, ParseError> {
         if let Some(Token::If) = self.peek() {
             return self.parse_if();
         }
@@ -583,8 +593,8 @@ impl TokenStream<'_> {
 
         while let FollowUp::BinaryOperator(op) = follow_up {
             let (rhs, new_follow_up) = self.parse_until_stickyness(op.stickyness())?;
-            let expr = Expr::BinaryOp(ast, op, rhs);
-            ast = self.expressions.add(expr);
+            let expr = Expr::BinaryOp(self.expressions.add(ast), op, self.expressions.add(rhs));
+            ast = expr;
             follow_up = new_follow_up;
         }
         Ok(ast)
@@ -680,7 +690,7 @@ impl TokenStream<'_> {
         left_token: Token,
         separator_token: Token,
         right_token: Token,
-    ) -> Result<(Vec<ExprId>, bool), ParseError> {
+    ) -> Result<(Vec<Expr>, bool), ParseError> {
         self.expect(left_token)?;
 
         let mut statements = Vec::new();
@@ -714,10 +724,12 @@ impl TokenStream<'_> {
 
         if has_trailing_separator {
             let expr = Expr::Constant(Constant::None);
-            statements.push(self.expressions.add(expr));
+            statements.push(expr);
         }
 
-        Ok(Block::new(statements))
+        let range = self.expressions.add_range(statements);
+
+        Ok(Block::new(range))
     }
 }
 
@@ -779,13 +791,25 @@ impl Expressions {
     }
 
     fn add(&mut self, expr: Expr) -> ExprId {
-        let res = ExprId(self.vec.len());
+        let res = self.next_expr_id();
         self.vec.push(expr);
         res
     }
 
     fn get(&self, expr_id: ExprId) -> &Expr {
         &self.vec[expr_id.0]
+    }
+
+    //TODO private
+    fn next_expr_id(&self) -> ExprId {
+        ExprId(self.vec.len())
+    }
+
+    fn add_range(&mut self, exprs: impl IntoIterator<Item = Expr>) -> ExprRange {
+        let start = self.next_expr_id();
+        self.vec.extend(exprs);
+        let end = self.next_expr_id();
+        ExprRange { start, end }
     }
 }
 
@@ -795,38 +819,40 @@ pub struct Ast {
     entry_point: Option<FunId>,
 }
 
+// pub struct AnnotatedAst {
+//     ast: Ast,
+// }
+// impl AnnotatedAst {
+//     pub fn to_code(&self) -> String {
+//         for fun in self.ast.funs {
+//             self.to_code_fun(fun)
+//         }
+//     }
+
+//     fn to_code_fun(&self, fun: Fun) {
+//         todo!()
+//     }
+// }
+
 impl Ast {
-    pub fn to_code(&self) -> String {
-        todo!()
-        // for fun in self.funs {}
-    }
-
-    // fn new(funs: IndexMap<Word, Fun>) -> Self {
-    //     Self { funs }
-    // }
-
     fn evaluate_block(
         &self,
         block: &Block,
         variable_values: &VariableValues,
     ) -> Result<Evaluation, RuntimeError> {
-        if block.statements.is_empty() {
+        let Some(last_id) = block.statements.end.0.checked_sub(1) else {
             return Ok(Constant::None.into());
-        }
+        };
 
-        for statement in
-            &block.statements[..block.statements.len().checked_sub(1).expect("not empty")]
-        {
-            let eval = self.evaluate_expr(*statement, variable_values)?;
+        for id in block.statements.start.0..last_id {
+            let expr_id = ExprId(id);
+            let eval = self.evaluate_expr(expr_id, variable_values)?;
             let Some(_) = eval.some_or_please_return() else {
                 return Ok(eval);
             };
         }
 
-        self.evaluate_expr(
-            *block.statements.last().expect("not empty"),
-            variable_values,
-        )
+        self.evaluate_expr(ExprId(last_id), variable_values)
     }
 
     fn evaluate_expr(
@@ -873,8 +899,8 @@ impl Ast {
             }
             Expr::Call(call) => {
                 let mut parameters = Vec::new();
-                for argument in &call.arguments {
-                    let eval = self.evaluate_expr(*argument, variable_values)?;
+                for id in call.arguments.start.0..call.arguments.end.0 {
+                    let eval = self.evaluate_expr(ExprId(id), variable_values)?;
                     let Some(parameter) = eval.some_or_please_return() else {
                         return Ok(eval);
                     };
@@ -940,20 +966,22 @@ impl Ast {
 
 //TODO: Type deduce
 pub fn evaluate_debug(
-    expr_id: ExprId,
+    expr: Expr,
     ty: Ty,
-    expressions: Expressions,
+    mut expressions: Expressions,
 ) -> Result<Constant, RuntimeError> {
     let name = MAIN.clone();
 
-    let main = Fun::new(
-        name.clone(),
-        Variables::new(),
-        ty,
-        Block {
-            statements: vec![expr_id],
+    let expr_id = expressions.add(expr);
+
+    let block = Block {
+        statements: ExprRange {
+            start: expr_id,
+            end: ExprId(expr_id.0 + 1),
         },
-    );
+    };
+
+    let main = Fun::new(name.clone(), Variables::new(), ty, block);
 
     let ast = Ast::new(vec![main], expressions, Some(FunId(0)));
 
@@ -1001,22 +1029,44 @@ pub enum TokenizeError {
     InvalidWord(String),
 }
 
-struct Parsee<'a> {
-    iter: Peekable<Chars<'a>>,
+struct Parsee {
+    //Should not be empty.
+    lines: Vec<Vec<char>>,
+    current_line_id: usize,
+    current_char_id: usize,
+    filename: String,
 }
 
-impl<'a> Parsee<'a> {
+impl Parsee {
     fn peek(&mut self) -> Option<char> {
-        self.iter.peek().copied()
+        self.lines
+            .get(self.current_line_id)
+            .map(|line| line[self.current_char_id])
     }
 
     fn next(&mut self) -> Option<char> {
-        self.iter.next()
+        let c = self.peek()?;
+
+        self.current_char_id += 1;
+        if self.lines[self.current_line_id].len() == self.current_char_id {
+            self.current_line_id += 1;
+            self.current_char_id = 0;
+        }
+
+        Some(c)
     }
 
-    fn new(chars: &'a str) -> Self {
+    fn new(chars: &str, filename: String) -> Self {
+        let lines = chars
+            .lines()
+            .filter(|line| !line.is_empty())
+            .map(|line| line.chars().collect())
+            .collect();
         Self {
-            iter: chars.chars().peekable(),
+            lines,
+            current_line_id: 0,
+            current_char_id: 0,
+            filename,
         }
     }
 
@@ -1027,7 +1077,7 @@ impl<'a> Parsee<'a> {
         }
     }
 
-    fn parse_word(&mut self, start: char) -> Result<Token, TokenizeError> {
+    fn parse_word(&mut self, start: char) -> Result<Token, SourceTokenizeError> {
         let mut word = String::new();
         word.push(start);
 
@@ -1044,10 +1094,10 @@ impl<'a> Parsee<'a> {
             return Ok(token.clone());
         }
 
-        Ok(Token::Word(word.try_into()?))
+        Ok(Token::Word(word.try_into().map_err(|err| self.error(err))?))
     }
 
-    fn parse_token(&mut self) -> Result<Option<Token>, TokenizeError> {
+    fn parse_token(&mut self) -> Result<Option<Token>, SourceTokenizeError> {
         self.skip_whitespaces();
 
         let Some(start) = self.next() else {
@@ -1068,13 +1118,13 @@ impl<'a> Parsee<'a> {
         let token = match start {
             '0'..='9' => self.parse_number(start)?,
             'A'..='z' => self.parse_word(start)?,
-            _ => return Err(TokenizeError::UnknownCharacter(start)),
+            _ => return Err(self.error(TokenizeError::UnknownCharacter(start))),
         };
 
         Ok(Some(token))
     }
 
-    fn parse_number(&mut self, start: char) -> Result<Token, TokenizeError> {
+    fn parse_number(&mut self, start: char) -> Result<Token, SourceTokenizeError> {
         let mut word = String::new();
         word.push(start);
 
@@ -1090,6 +1140,68 @@ impl<'a> Parsee<'a> {
         let i = word.parse().unwrap();
 
         Ok(Token::IntConstant(Constant::Int(IntConstant::Small(i))))
+    }
+
+    fn error(&self, error: TokenizeError) -> SourceTokenizeError {
+        SourceTokenizeError::new(
+            self.filename.clone(),
+            self.current_line_id,
+            self.current_char_id,
+            self.current_line(),
+            error,
+        )
+    }
+
+    fn current_line(&self) -> String {
+        self.lines
+            .get(self.current_line_id)
+            .expect("hopefully only called when still pointing to something")
+            .iter()
+            .collect()
+    }
+}
+
+#[derive(Debug, Error)]
+pub struct SourceError<E: Error> {
+    line_id: usize,
+    character_id: usize,
+    filename: String,
+    line: String,
+    error: E,
+}
+
+impl<E: Display + Error> Display for SourceError<E> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut pointer = String::new();
+        for _ in 0..self.character_id - 1 {
+            pointer.push(' ');
+        }
+        pointer.push('^');
+
+        write!(
+            f,
+            "{}:{}:{}\n{}\n{}\n{}",
+            self.filename,
+            self.line_id + 1,
+            self.character_id,
+            self.line,
+            pointer,
+            self.error
+        )
+    }
+}
+
+pub type SourceTokenizeError = SourceError<TokenizeError>;
+
+impl<E: Error> SourceError<E> {
+    fn new(filename: String, line_id: usize, character_id: usize, line: String, error: E) -> Self {
+        Self {
+            filename,
+            line_id,
+            character_id,
+            line,
+            error,
+        }
     }
 }
 

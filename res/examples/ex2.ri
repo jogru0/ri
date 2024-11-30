@@ -1,0 +1,21 @@
+fun fib(n: int) -> int {
+    
+    // if n < 2 {
+    //     return n;
+    // };
+
+    val mem: List(int) = List();
+
+    mem.push(0);
+    mem.push(1);
+
+    for i in Range(2, n + 1) {
+        mem.push(mem.get(i - 1) + mem.get(i -2));
+    }
+
+     mem.pop()
+}
+
+fun main() -> int {
+    return return fib( 111);;
+}

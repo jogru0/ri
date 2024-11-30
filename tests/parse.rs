@@ -4,7 +4,7 @@ use ri::parse::{evaluate_debug, Constant, FunId, IntConstant, TokenStream, Token
 fn punkt_vor_strich() {
     let s = "   1+2* 3     ";
 
-    let tokens = Tokens::from_code(s).unwrap();
+    let tokens = Tokens::from_code(s, "mock.ri".into()).unwrap();
 
     let mut ts = TokenStream::new(&tokens);
 
@@ -21,7 +21,7 @@ fn punkt_vor_strich() {
 fn punkt_vor_strich_ändert_nix() {
     let s = "1 *2 +3";
 
-    let tokens = Tokens::from_code(s).unwrap();
+    let tokens = Tokens::from_code(s, "mock.ri".into()).unwrap();
 
     let mut ts = TokenStream::new(&tokens);
 
@@ -38,7 +38,7 @@ fn punkt_vor_strich_ändert_nix() {
 fn punkt_strich_punkt() {
     let s = " 0 * 10+10 * 0 ";
 
-    let tokens = Tokens::from_code(s).unwrap();
+    let tokens = Tokens::from_code(s, "mock.ri".into()).unwrap();
 
     let mut ts = TokenStream::new(&tokens);
 
@@ -58,7 +58,7 @@ fn strich_punkt_strich() {
     
     + 4";
 
-    let tokens = Tokens::from_code(s).unwrap();
+    let tokens = Tokens::from_code(s, "mock.ri".into()).unwrap();
 
     let mut ts = TokenStream::new(&tokens);
 
@@ -75,7 +75,7 @@ fn strich_punkt_strich() {
 fn minus_minus() {
     let s = " 10 - 1 -\t\n 1";
 
-    let tokens = Tokens::from_code(s).unwrap();
+    let tokens = Tokens::from_code(s, "mock.ri".into()).unwrap();
 
     let mut ts = TokenStream::new(&tokens);
 
@@ -98,7 +98,7 @@ fn fun_sum() {
     
     ";
 
-    let tokens = Tokens::from_code(s).unwrap();
+    let tokens = Tokens::from_code(s, "mock.ri".into()).unwrap();
 
     let ast = tokens.parse().unwrap();
 

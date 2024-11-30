@@ -1,6 +1,6 @@
 use std::{env::args, fmt::Debug, fs::read_to_string, io::Error};
 
-use ri::parse::{ParseError, RuntimeError, TokenizeError, Tokens};
+use ri::parse::{ParseError, RuntimeError, SourceTokenizeError, Tokens};
 use thiserror::Error;
 
 #[derive(Error)]
@@ -8,7 +8,7 @@ enum MainError {
     #[error("no source file provided")]
     NoSourceFile,
     #[error("Tokenize Error: {0}")]
-    TokenizeError(#[from] TokenizeError),
+    TokenizeError(#[from] SourceTokenizeError),
     #[error("Parse Error: {0}")]
     ParseError(#[from] ParseError),
     #[error("Runtime Error: {0}")]
@@ -20,7 +20,11 @@ enum MainError {
 // Make main use Display, not Debug, for error reporting.
 impl Debug for MainError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self}")
+        let s: String = format!("{self}")
+            .chars()
+            .map(|c| if c == '\'' { '`' } else { c })
+            .collect();
+        write!(f, "{}", s)
     }
 }
 
@@ -31,7 +35,7 @@ fn main() -> Result<(), MainError> {
 
     let code = read_to_string(&args[1]).map_err(|err| MainError::IoError(path.into(), err))?;
 
-    let tokens = Tokens::from_code(&code)?;
+    let tokens = Tokens::from_code(&code, path.clone())?;
 
     let ast = tokens.parse()?;
 
