@@ -1,0 +1,9 @@
+fun main() -> int {
+    val n: int = 0;
+    while n < 1000000 {
+        val l: List = List.new();
+        n = n + 1;
+    }
+
+    2
+}

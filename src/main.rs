@@ -1,5 +1,6 @@
 use std::{env::args, fmt::Debug, fs::read_to_string, io::Error};
 
+use log::error;
 use ri::parse::{ParseError, RuntimeError, SourceTokenizeError, Tokens};
 use thiserror::Error;
 
@@ -29,6 +30,11 @@ impl Debug for MainError {
 }
 
 fn main() -> Result<(), MainError> {
+    env_logger::Builder::new()
+        .filter_level(log::LevelFilter::Warn)
+        .filter_module("ri", log::LevelFilter::Debug)
+        .init();
+
     let args: Vec<String> = args().collect();
 
     let path = args.get(1).ok_or(MainError::NoSourceFile)?;

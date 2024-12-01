@@ -1,0 +1,47 @@
+
+
+fun main() -> int {
+    val input_string: List = List.from_file("res/aoc/1.txt");
+
+    val number_strings: List = input_string.split_whitespace();
+
+    val numbers: List = List.new();
+
+    val i: int = 0;
+    val len: int = number_strings.len();
+    while i < len {
+        numbers.push(number_strings.get(i).parse(int));
+        i = i + 1;
+    }
+
+    val left = List.new();
+    val right = List.new();
+
+    i  = 0;
+    len = numbers.len();
+    while i < len {
+        if i % 2 == 0 {
+            left.push(number_strings.get(i).parse(int));
+        } else {
+            right.push(number_strings.get(i).parse(int));
+        }
+
+        i = i + 1;
+    }
+
+    left.sort();
+    right.sort();
+
+    val sum = 0;
+
+    i = 0;
+    len = right.len();
+    while i < len {
+        sum = sum + (right.get(i) - left.get(i)).abs();
+
+        i = i+1;
+    }
+
+    sum
+
+}

@@ -1,9 +1,12 @@
 use std::{
+    cell::RefCell,
     cmp::Ordering,
     error::Error,
     fmt::Display,
+    fs::read_to_string,
     mem::swap,
-    ops::{Add, Mul, Sub},
+    ops::{Add, Mul, Rem, Sub},
+    rc::Rc,
     sync::LazyLock,
 };
 
@@ -29,6 +32,7 @@ pub enum RuntimeError {
     MisingReturn,
     #[error("unknown function '{0}'")]
     UnknownDotFunction(Word),
+    //TODO constuctor, make sure they are unequal
     #[error("type error: expected '{0}', found '{1}'")]
     TypeError(Ty, Ty),
     #[error("invalid operation:'{0} {1} {2}'")]
@@ -43,6 +47,10 @@ pub enum RuntimeError {
     StaticFunctionOnWrongType(Ty, InternalFun),
     #[error("operation '{0}' invalid on empty list")]
     OperationInvalidOnEmptyList(InternalFun),
+    #[error("encountered problem accessing file '{1}': {0}")]
+    Io(std::io::Error, String),
+    #[error("cannot parse '{0}' as '{1}': {2}")]
+    Parse(String, Ty, std::num::ParseIntError),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -50,13 +58,20 @@ pub enum IntConstant {
     Small(i128),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Constant {
     Int(IntConstant),
     Bool(bool),
     None,
-    List(ListId),
+    List(Rc<RefCell<Vec<Constant>>>),
     Ty(Ty),
+    Char(char),
+}
+
+impl From<Vec<Constant>> for Constant {
+    fn from(value: Vec<Constant>) -> Self {
+        Self::List(Rc::new(RefCell::new(value)))
+    }
 }
 
 impl Constant {
@@ -78,6 +93,7 @@ impl Constant {
             Constant::None => Ty::None,
             Constant::List(_) => Ty::List,
             Constant::Ty(_) => Ty::Ty,
+            Constant::Char(_) => Ty::Char,
         }
     }
 }
@@ -99,6 +115,20 @@ impl Display for Constant {
             //TODO make it good
             Constant::List(vec) => write!(f, "{vec:?}"),
             Constant::Ty(ty) => write!(f, "{ty}"),
+            Constant::Char(c) => write!(f, "{c}"),
+        }
+    }
+}
+
+impl Rem for IntConstant {
+    type Output = Result<IntConstant, RuntimeError>;
+
+    fn rem(self, other: Self) -> Self::Output {
+        match (self, other) {
+            (IntConstant::Small(lhs), IntConstant::Small(rhs)) => lhs
+                .checked_rem(rhs)
+                .ok_or(RuntimeError::NotImplememted("numbers beyond i128".into()))
+                .map(Self::Small),
         }
     }
 }
@@ -150,7 +180,7 @@ pub enum Expr {
     BinaryOp(ExprId, BinaryOperator, ExprId),
     Block(Block),
     //TODO: Test for block here
-    If(ExprId, Block),
+    If(ExprId, Block, Block),
     While(ExprId, Block),
     Call(Call),
     InternalCall(InternalCall),
@@ -161,7 +191,7 @@ pub enum Expr {
 #[derive(Clone, Copy, Debug)]
 pub struct VariableId(usize);
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct ExprId(usize);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,7 +201,7 @@ pub struct ListId(usize);
 //TODO pub field
 pub struct FunId(pub usize);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ExprRange {
     start: ExprId,
     end: ExprId,
@@ -194,6 +224,12 @@ pub enum InternalFun {
     Push,
     Get,
     Pop,
+    FromFile,
+    Len,
+    SplitWhitespace,
+    Parse,
+    Sort,
+    Abs,
 }
 
 impl Display for InternalFun {
@@ -203,6 +239,12 @@ impl Display for InternalFun {
             InternalFun::Push => write!(f, "push"),
             InternalFun::Get => write!(f, "get"),
             InternalFun::Pop => write!(f, "pop"),
+            InternalFun::FromFile => write!(f, "from_file"),
+            InternalFun::Len => write!(f, "len"),
+            InternalFun::SplitWhitespace => write!(f, "split_whitespace"),
+            InternalFun::Parse => write!(f, "parse"),
+            InternalFun::Sort => write!(f, "sort"),
+            InternalFun::Abs => write!(f, "abs"),
         }
     }
 }
@@ -213,6 +255,12 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
         "push".try_into().expect("const") => InternalFun::Push,
         "get".try_into().expect("const") => InternalFun::Get,
         "pop".try_into().expect("const") => InternalFun::Pop,
+        "from_file".try_into().expect("const") => InternalFun::FromFile,
+        "len".try_into().expect("const") => InternalFun::Len,
+        "split_whitespace".try_into().expect("const") => InternalFun::SplitWhitespace,
+        "parse".try_into().expect("const") => InternalFun::Parse,
+        "sort".try_into().expect("const") => InternalFun::Sort,
+        "abs".try_into().expect("const") => InternalFun::Abs,
     }
 });
 
@@ -268,7 +316,6 @@ impl Variables {
 pub struct VariableValues {
     values: Vec<Constant>,
     reference: usize,
-    lists: Vec<Vec<Constant>>,
 }
 
 impl VariableValues {
@@ -283,19 +330,8 @@ impl VariableValues {
     pub fn new() -> Self {
         Self {
             values: Vec::new(),
-            lists: Vec::new(),
             reference: 0,
         }
-    }
-
-    fn add_list(&mut self) -> ListId {
-        let res = ListId(self.lists.len());
-        self.lists.push(Vec::new());
-        res
-    }
-
-    fn get_list_mut(&mut self, l: ListId) -> &mut Vec<Constant> {
-        &mut self.lists[l.0]
     }
 
     fn set(&mut self, variable_id: VariableId, mut new: Constant) -> Result<(), RuntimeError> {
@@ -406,6 +442,21 @@ impl Mul for Constant {
 //     }
 // }
 
+impl Rem for Constant {
+    type Output = Result<Constant, RuntimeError>;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (Constant::Int(lhs), Constant::Int(rhs)) => Ok(Constant::Int((lhs % rhs)?)),
+            (lhs, rhs) => Err(RuntimeError::InvalidBinaryOperation(
+                lhs,
+                BinaryOperator::Modulo,
+                rhs,
+            )),
+        }
+    }
+}
+
 impl Sub for Constant {
     type Output = Result<Constant, RuntimeError>;
 
@@ -450,6 +501,9 @@ fn combine_with_operator(
             .partial_cmp(&rhs)
             .ok_or(RuntimeError::InvalidBinaryOperation(lhs, op, rhs))
             .map(|ord| Constant::Bool(ord == Ordering::Less)),
+        BinaryOperator::Modulo => lhs % rhs,
+        //TODO error on ty mismatch
+        BinaryOperator::Equals => Ok(Constant::Bool(lhs == rhs)),
     }
 }
 
@@ -521,6 +575,8 @@ pub enum BinaryOperator {
     Times,
     Minus,
     Smaller,
+    Modulo,
+    Equals,
 }
 
 impl Display for BinaryOperator {
@@ -530,6 +586,8 @@ impl Display for BinaryOperator {
             BinaryOperator::Times => write!(f, "*"),
             BinaryOperator::Minus => write!(f, "-"),
             BinaryOperator::Smaller => write!(f, "<"),
+            BinaryOperator::Modulo => write!(f, "%"),
+            BinaryOperator::Equals => write!(f, "=="),
         }
     }
 }
@@ -548,6 +606,8 @@ impl BinaryOperator {
             BinaryOperator::Times => Stickyness::Multiplication,
             BinaryOperator::Minus => Stickyness::Addition,
             BinaryOperator::Smaller => Stickyness::Comparison,
+            BinaryOperator::Modulo => Stickyness::Multiplication,
+            BinaryOperator::Equals => Stickyness::Comparison,
         }
     }
 }
@@ -672,7 +732,7 @@ impl TokenStream<'_> {
                 }
                 _ => Expr::Variable(self.stack.get(&word)?),
             },
-            Token::IntConstant(int_constant) => Expr::Constant(int_constant),
+            Token::Literal(int_constant) => Expr::Constant(int_constant),
             _ => {
                 return Err(ParseError::UnexpectedToken(
                     token,
@@ -726,7 +786,18 @@ impl TokenStream<'_> {
 
         let if_block = self.parse_block()?;
 
-        let expr = Expr::If(self.expressions.add(cond), if_block);
+        let else_block = if self.entertain(Token::Else) {
+            self.parse_block()?
+        } else {
+            Block {
+                statements: ExprRange {
+                    start: ExprId(0),
+                    end: ExprId(0),
+                },
+            }
+        };
+
+        let expr = Expr::If(self.expressions.add(cond), if_block, else_block);
         Ok(expr)
     }
 
@@ -879,9 +950,14 @@ impl TokenStream<'_> {
 
             if allow_variable_introduction && self.entertain(Token::Val) {
                 let name = self.expect_word()?;
-                self.expect(Token::Colon)?;
+
                 //TODO Use type info
-                let _ty = self.expect_ty()?;
+                let _ty = if self.entertain(Token::Colon) {
+                    Some(self.expect_ty()?)
+                } else {
+                    None
+                };
+
                 self.expect(Token::Assign)?;
 
                 //SYNC(INTRO_AFTER_EVAL) Variable gets introduced after evaluating its initial value.
@@ -1047,9 +1123,13 @@ impl Ast {
         block: &Block,
         variable_values: &mut VariableValues,
     ) -> Result<Evaluation, RuntimeError> {
-        let Some(last_id) = block.statements.end.0.checked_sub(1) else {
+        if block.statements.start == block.statements.end {
             return Ok(Constant::None.into());
-        };
+        }
+
+        assert!(block.statements.start < block.statements.end);
+
+        let last_id = block.statements.end.0.checked_sub(1).expect("assert above");
 
         let old_size = variable_values.values.len();
 
@@ -1073,7 +1153,7 @@ impl Ast {
         variable_values: &mut VariableValues,
     ) -> Result<Evaluation, RuntimeError> {
         match self.expressions.get(expr_id) {
-            Expr::Constant(int_constant) => Ok((*int_constant).into()),
+            Expr::Constant(int_constant) => Ok((int_constant.clone()).into()),
             Expr::Variable(variable_id) => Ok(variable_values.get(variable_id)?.into()),
             Expr::BinaryOp(lhs_expr, op, rhs_expr) => {
                 let lhs = self.evaluate_expr(*lhs_expr, variable_values)?;
@@ -1086,13 +1166,13 @@ impl Ast {
                     return Ok(rhs);
                 };
 
-                Ok(combine_with_operator(*lhs, *op, *rhs)?.into())
+                Ok(combine_with_operator(lhs.clone(), *op, rhs.clone())?.into())
             }
             Expr::Block(block) => self.evaluate_block(block, variable_values),
             Expr::Return(expr) => self
                 .evaluate_expr(*expr, variable_values)
                 .map(|evaluation| evaluation.returning()),
-            Expr::If(expr, block) => {
+            Expr::If(expr, if_block, else_block) => {
                 let eval = self.evaluate_expr(*expr, variable_values)?;
                 let Some(constant) = eval.some_or_please_return() else {
                     return Ok(eval);
@@ -1100,12 +1180,12 @@ impl Ast {
 
                 let b = constant.get_bool()?;
 
-                if b {
-                    let block_result = self.evaluate_block(block, variable_values)?;
-                    let Some(_) = block_result.some_or_please_return() else {
-                        return Ok(block_result);
-                    };
-                }
+                let block_to_use = if b { if_block } else { else_block };
+
+                let block_result = self.evaluate_block(block_to_use, variable_values)?;
+                let Some(_) = block_result.some_or_please_return() else {
+                    return Ok(block_result);
+                };
 
                 Ok(Constant::None.into())
             }
@@ -1117,7 +1197,7 @@ impl Ast {
                         return Ok(eval);
                     };
 
-                    parameters.push(*parameter);
+                    parameters.push(parameter.clone());
                 }
                 self.evaluate_fun(call.fun_id, parameters, variable_values)
                     .map(|c| c.into())
@@ -1127,7 +1207,7 @@ impl Ast {
                 let Some(eval) = eval.some_or_please_return() else {
                     return Ok(eval);
                 };
-                variable_values.set(*variable_id, *eval)?;
+                variable_values.set(*variable_id, eval.clone())?;
                 Ok(Constant::None.into())
             }
             Expr::Introduce(variable_id, expr_id) => {
@@ -1136,7 +1216,7 @@ impl Ast {
                 let Some(eval) = eval.some_or_please_return() else {
                     return Ok(eval);
                 };
-                variable_values.introduce(*variable_id, *eval);
+                variable_values.introduce(*variable_id, eval.clone());
 
                 Ok(Constant::None.into())
             }
@@ -1149,9 +1229,9 @@ impl Ast {
                         return Ok(eval);
                     };
 
-                    parameters.push(*parameter);
+                    parameters.push(parameter.clone());
                 }
-                self.evaluate_internal_fun(internal_call.internal_fun, parameters, variable_values)
+                self.evaluate_internal_fun(internal_call.internal_fun, parameters)
                     .map(|c| c.into())
             }
             Expr::While(expr_id, block) => loop {
@@ -1230,46 +1310,114 @@ impl Ast {
         &self,
         internal_fun: InternalFun,
         parameters: Vec<Constant>,
-        variable_values: &mut VariableValues,
     ) -> Result<Constant, RuntimeError> {
         match internal_fun {
             InternalFun::New => {
                 if let Some(&Constant::Ty(ty)) = parameters.iter().collect_single() {
                     match ty {
-                        Ty::List => return Ok(Constant::List(variable_values.add_list())),
+                        Ty::List => return Ok(Constant::List(Default::default())),
                         _ => return Err(RuntimeError::StaticFunctionOnWrongType(ty, internal_fun)),
                     }
                 }
             }
             InternalFun::Push => {
-                if let Some((&Constant::List(l), &c)) = parameters.iter().collect_tuple() {
-                    let list = variable_values.get_list_mut(l);
-                    list.push(c);
+                if let Some((Constant::List(list), c)) = parameters.iter().collect_tuple() {
+                    (*list).borrow_mut().push(c.clone());
                     return Ok(Constant::None);
                 }
             }
             InternalFun::Get => {
-                if let Some((&Constant::List(l), &Constant::Int(i))) =
+                if let Some((Constant::List(list), &Constant::Int(i))) =
                     parameters.iter().collect_tuple()
                 {
-                    let list = variable_values.get_list_mut(l);
                     let IntConstant::Small(id) = i;
                     let id: usize = id
                         .try_into()
-                        .map_err(|_| RuntimeError::IndexOutOfBounds(list.clone(), i))?;
+                        .map_err(|_| RuntimeError::IndexOutOfBounds(list.borrow().clone(), i))?;
                     return list
+                        .borrow()
                         .get(id)
-                        .ok_or_else(|| RuntimeError::IndexOutOfBounds(list.clone(), i))
-                        .copied();
+                        .ok_or_else(|| RuntimeError::IndexOutOfBounds(list.borrow().clone(), i))
+                        .cloned();
                 }
             }
 
             InternalFun::Pop => {
-                if let Some(&Constant::List(l)) = parameters.iter().collect_single() {
-                    let list = variable_values.get_list_mut(l);
-                    return list.pop().ok_or_else(|| {
+                if let Some(Constant::List(list)) = parameters.iter().collect_single() {
+                    return list.borrow_mut().pop().ok_or_else(|| {
                         RuntimeError::OperationInvalidOnEmptyList(InternalFun::Pop)
                     });
+                }
+            }
+            InternalFun::Len => {
+                if let Some(Constant::List(list)) = parameters.iter().collect_single() {
+                    return Ok(Constant::Int(IntConstant::Small(
+                        //TODO Cast so ok?
+                        list.borrow().len() as i128,
+                    )));
+                }
+            }
+            InternalFun::FromFile => {
+                if let Some((&Constant::Ty(ty), Constant::List(list))) =
+                    parameters.iter().collect_tuple()
+                {
+                    match ty {
+                        Ty::List => {
+                            let path = try_list_to_string(&list.borrow())?;
+
+                            let file_content =
+                                read_to_string(&path).map_err(|err| RuntimeError::Io(err, path))?;
+                            let list = file_content.chars().map(Constant::Char).collect_vec();
+                            return Ok(list.into());
+                        }
+                        _ => return Err(RuntimeError::StaticFunctionOnWrongType(ty, internal_fun)),
+                    }
+                }
+            }
+            InternalFun::SplitWhitespace => {
+                if let Some(Constant::List(list)) = parameters.iter().collect_single() {
+                    let string = try_list_to_string(&list.borrow())?;
+                    let result: Vec<Constant> = string
+                        .split_whitespace()
+                        .map(|sub| str_to_list(sub).into())
+                        .collect_vec();
+
+                    return Ok(result.into());
+                }
+            }
+            InternalFun::Parse => {
+                if let Some((Constant::List(list), Constant::Ty(Ty::Int))) =
+                    parameters.iter().collect_tuple()
+                {
+                    let string = try_list_to_string(&list.borrow())?;
+                    let i: i128 = string
+                        .parse()
+                        .map_err(|err| RuntimeError::Parse(string, Ty::Int, err))?;
+
+                    return Ok(Constant::Int(IntConstant::Small(i)));
+                }
+            }
+            InternalFun::Sort => {
+                if let Some(Constant::List(list)) = parameters.iter().collect_single() {
+                    let mut new_list = Vec::new();
+                    for val in list.borrow().iter() {
+                        let &Constant::Int(i) = val else {
+                            return Err(RuntimeError::TypeError(Ty::Int, val.ty()));
+                        };
+                        new_list.push(i);
+                    }
+                    new_list.sort();
+                    let new_list = new_list.into_iter().map(Constant::Int).collect();
+
+                    *list.borrow_mut() = new_list;
+
+                    return Ok(Constant::None);
+                }
+            }
+            InternalFun::Abs => {
+                if let Some(Constant::Int(i)) = parameters.iter().collect_single() {
+                    let IntConstant::Small(i) = i;
+                    return Ok(Constant::Int(IntConstant::Small(i.abs())));
                 }
             }
         }
@@ -1325,6 +1473,25 @@ pub fn evaluate_debug(
 
 static MAIN: LazyLock<Word> = LazyLock::new(|| "main".try_into().expect("valid word"));
 
+fn try_list_to_string(list: &Vec<Constant>) -> Result<String, RuntimeError> {
+    let mut s = String::new();
+
+    for c in list {
+        let Constant::Char(c) = c else {
+            //TODO test case for that; maybe better error message due to context
+            return Err(RuntimeError::TypeError(Ty::Char, c.ty()));
+        };
+
+        s.push(*c);
+    }
+
+    Ok(s)
+}
+
+fn str_to_list(s: &str) -> Vec<Constant> {
+    s.chars().map(Constant::Char).collect()
+}
+
 pub struct Fun {
     name: Word,
     variables: Variables,
@@ -1359,6 +1526,8 @@ pub enum TokenizeError {
     UnknownCharacter(char),
     #[error("invalid word: '{0}'")]
     InvalidWord(String),
+    #[error("missing '\"' to end the string literal")]
+    MissingEndOfStringLiteral,
 }
 
 struct Parsee {
@@ -1420,7 +1589,7 @@ impl Parsee {
         word.push(start);
 
         while let Some(next) = self.peek() {
-            if !next.is_ascii_alphanumeric() {
+            if !(next.is_ascii_alphanumeric() || next == '_') {
                 break;
             }
 
@@ -1428,11 +1597,13 @@ impl Parsee {
             self.next();
         }
 
-        if let Some(token) = KEYWORD_TOKEN_MAP.get(word.as_str()) {
+        if let Some(token) = keyword_to_token(&word) {
             return Ok(token.clone());
         }
 
-        Ok(Token::Word(word.try_into().map_err(|err| self.error(err))?))
+        Ok(Token::Word(
+            word.try_into().expect("just parsed it correctly"),
+        ))
     }
 
     fn parse_token(&mut self) -> Result<Option<Token>, SourceTokenizeError> {
@@ -1447,12 +1618,17 @@ impl Parsee {
             return self.parse_token();
         }
 
-        if let Some(token) = SINGLE_DIGIT_TOKEN_MAP.get(&start) {
+        if let Some(token) = single_digit_to_token(start) {
             if matches!(token, Token::BinaryOperator(BinaryOperator::Minus))
                 && Some('>') == self.peek()
             {
                 self.next();
                 return Ok(Some(Token::Arrow));
+            }
+
+            if matches!(token, Token::Assign) && Some('=') == self.peek() {
+                self.next();
+                return Ok(Some(Token::BinaryOperator(BinaryOperator::Equals)));
             }
 
             return Ok(Some(token.clone()));
@@ -1461,6 +1637,7 @@ impl Parsee {
         let token = match start {
             '0'..='9' => self.parse_number(start)?,
             'A'..='z' => self.parse_word(start)?,
+            '"' => self.parse_string_literal()?,
             _ => return Err(self.error(TokenizeError::UnknownCharacter(start))),
         };
 
@@ -1482,7 +1659,7 @@ impl Parsee {
 
         let i = word.parse().unwrap();
 
-        Ok(Token::IntConstant(Constant::Int(IntConstant::Small(i))))
+        Ok(Token::Literal(Constant::Int(IntConstant::Small(i))))
     }
 
     fn error(&self, error: TokenizeError) -> SourceTokenizeError {
@@ -1506,6 +1683,37 @@ impl Parsee {
     fn skip_rest_of_line(&mut self) {
         self.current_char_id = self.lines[self.current_line_id].len();
         self.skip_if_end_of_line();
+    }
+
+    fn parse_string_literal(&mut self) -> Result<Token, SourceTokenizeError> {
+        let mut list = Vec::new();
+
+        loop {
+            //TODO test error
+            let Some(c) = self.next() else {
+                return Err(self.error(TokenizeError::MissingEndOfStringLiteral));
+            };
+            if c == '"' {
+                return Ok(Token::Literal(list.into()));
+            }
+
+            list.push(Constant::Char(c));
+        }
+        // let mut word = String::new();
+        // word.push(start);
+
+        // while let Some(next) = self.peek() {
+        //     if !next.is_ascii_digit() {
+        //         break;
+        //     }
+
+        //     word.push(next);
+        //     self.next();
+        // }
+
+        // let i = word.parse().unwrap();
+
+        // Ok(Token::Literal(Constant::Int(IntConstant::Small(i))))
     }
 }
 
@@ -1553,40 +1761,53 @@ impl<E: Error> SourceError<E> {
     }
 }
 
-static SINGLE_DIGIT_TOKEN_MAP: LazyLock<IndexMap<char, Token>> = std::sync::LazyLock::new(|| {
-    indexmap! {
-        ',' => Token::Comma,
-        ';' => Token::Semicolon,
-        '+' => Token::BinaryOperator(BinaryOperator::Plus),
-        '-' => Token::BinaryOperator(BinaryOperator::Minus),
-        '*' => Token::BinaryOperator(BinaryOperator::Times),
-        '<' => Token::BinaryOperator(BinaryOperator::Smaller),
-        '(' => Token::ParanLeft,
-        ')' => Token::ParanRight,
-        '{' => Token::BraceLeft,
-        '}' => Token::BraceRight,
-        ':' => Token::Colon,
-        '=' => Token::Assign,
-        '.' => Token::Dot,
-
+fn single_digit_to_token(c: char) -> Option<Token> {
+    match c {
+        ',' => Some(Token::Comma),
+        ';' => Some(Token::Semicolon),
+        '+' => Some(Token::BinaryOperator(BinaryOperator::Plus)),
+        '-' => Some(Token::BinaryOperator(BinaryOperator::Minus)),
+        '*' => Some(Token::BinaryOperator(BinaryOperator::Times)),
+        '<' => Some(Token::BinaryOperator(BinaryOperator::Smaller)),
+        '%' => Some(Token::BinaryOperator(BinaryOperator::Modulo)),
+        '(' => Some(Token::ParanLeft),
+        ')' => Some(Token::ParanRight),
+        '{' => Some(Token::BraceLeft),
+        '}' => Some(Token::BraceRight),
+        ':' => Some(Token::Colon),
+        '=' => Some(Token::Assign),
+        '.' => Some(Token::Dot),
+        _ => None,
     }
-});
+}
 
-static KEYWORD_TOKEN_MAP: LazyLock<IndexMap<&str, Token>> = std::sync::LazyLock::new(|| {
-    indexmap! {
-        "fun" => Token::Fun,
-        "return" => Token::Return,
-        "List" => Token::Ty(Ty::List),
-        "Range" => Token::Ty(Ty::Range),
-        "int" => Token::Ty(Ty::Int),
-        //TODO value vs type
-        "None" => Token::Ty(Ty::None),
-        "if" => Token::If,
-        "while" => Token::While,
-        "call" => Token::Call,
-        "val" => Token::Val,
+fn keyword_to_token(keyword: &str) -> Option<Token> {
+    if keyword == "fun" {
+        Some(Token::Fun)
+    } else if keyword == "return" {
+        Some(Token::Return)
+    } else if keyword == "List" {
+        Some(Token::Ty(Ty::List))
+    } else if keyword == "Range" {
+        Some(Token::Ty(Ty::Range))
+    } else if keyword == "int" {
+        Some(Token::Ty(Ty::Int))
+    } else if keyword == "None" {
+        Some(Token::Ty(Ty::None))
+    } else if keyword == "if" {
+        Some(Token::If)
+    } else if keyword == "else" {
+        Some(Token::Else)
+    } else if keyword == "while" {
+        Some(Token::While)
+    } else if keyword == "call" {
+        Some(Token::Call)
+    } else if keyword == "val" {
+        Some(Token::Val)
+    } else {
+        None
     }
-});
+}
 
 //TODO pub
 pub mod word {
@@ -1611,7 +1832,7 @@ pub mod word {
                 return Err(Self::Error::InvalidWord(value));
             }
 
-            if !chars.all(|c| c.is_ascii_alphanumeric()) {
+            if !chars.all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 return Err(Self::Error::InvalidWord(value));
             }
 
@@ -1642,6 +1863,7 @@ pub enum Ty {
     List,
     Range,
     Ty,
+    Char,
 }
 
 impl Display for Ty {
@@ -1653,6 +1875,7 @@ impl Display for Ty {
             Ty::Range => write!(f, "Range"),
             Ty::None => write!(f, "None"),
             Ty::Ty => write!(f, "TYPE"),
+            Ty::Char => write!(f, "char"),
         }
     }
 }
@@ -1660,9 +1883,10 @@ impl Display for Ty {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Token {
     Return,
+    Else,
     Ty(Ty),
     Word(Word),
-    IntConstant(Constant),
+    Literal(Constant),
     BinaryOperator(BinaryOperator),
     Semicolon,
     Colon,
@@ -1687,7 +1911,7 @@ impl Display for Token {
             Token::Return => write!(f, "return"),
             Token::Ty(ty) => write!(f, "{ty}"),
             Token::Word(word) => write!(f, "{word}"),
-            Token::IntConstant(int_constant) => write!(f, "{int_constant}"),
+            Token::Literal(int_constant) => write!(f, "{int_constant}"),
             Token::BinaryOperator(binary_operator) => write!(f, "{binary_operator}"),
             Token::Semicolon => write!(f, ";"),
             Token::Colon => write!(f, ":"),
@@ -1699,6 +1923,7 @@ impl Display for Token {
             Token::BraceRight => write!(f, "}}"),
             Token::Fun => write!(f, "fun"),
             Token::If => write!(f, "if"),
+            Token::Else => write!(f, "else"),
             Token::Call => write!(f, "call"),
             Token::Assign => write!(f, "="),
             Token::Dot => write!(f, "."),
