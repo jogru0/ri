@@ -1,4 +1,6 @@
-use ri::parse::{evaluate_debug, Constant, FunId, IntConstant, TokenStream, Tokens, Ty};
+use ri::parse::{
+    evaluate_debug, Constant, FunId, IntConstant, TokenStream, Tokens, Ty, VariableValues,
+};
 
 #[test]
 fn punkt_vor_strich() {
@@ -109,6 +111,7 @@ fn fun_sum() {
                 Constant::Int(IntConstant::Small(4)),
                 Constant::Int(IntConstant::Small(5)),
             ],
+            &mut VariableValues::new(),
         )
         .unwrap();
 

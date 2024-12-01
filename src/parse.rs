@@ -267,22 +267,24 @@ impl Variables {
 
 pub struct VariableValues {
     values: Vec<Constant>,
+    reference: usize,
     lists: Vec<Vec<Constant>>,
 }
 
 impl VariableValues {
     fn get(&self, variable_id: &VariableId) -> Result<Constant, RuntimeError> {
         self.values
-            .get(variable_id.0)
+            .get(variable_id.0 + self.reference)
             .ok_or_else(|| //RuntimeError::UnknownVariable(word.clone())
                 panic!("how"))
             .cloned()
     }
 
-    pub fn new(values: Vec<Constant>) -> Self {
+    pub fn new() -> Self {
         Self {
-            values,
+            values: Vec::new(),
             lists: Vec::new(),
+            reference: 0,
         }
     }
 
@@ -299,7 +301,7 @@ impl VariableValues {
     fn set(&mut self, variable_id: VariableId, mut new: Constant) -> Result<(), RuntimeError> {
         let old = self
             .values
-            .get_mut(variable_id.0)
+            .get_mut(variable_id.0 + self.reference)
             .ok_or(RuntimeError::UnknownVariable(variable_id))?;
 
         if old.ty() != new.ty() {
@@ -313,10 +315,20 @@ impl VariableValues {
 
     fn introduce(&mut self, variable_id: VariableId, initial: Constant) {
         //TODO: Can't happen, can it?
-        assert_eq!(variable_id.0, self.values.len());
+        assert_eq!(
+            variable_id.0 + self.reference,
+            self.values.len(),
+            "variables on stack messed up"
+        );
 
         //TODO: Typecheck?
         self.values.push(initial);
+    }
+}
+
+impl Default for VariableValues {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -945,7 +957,10 @@ impl Tokens {
                 Some(unexpected) => {
                     return Err(ParseError::UnexpectedToken(
                         unexpected,
-                        "expected a top level declaration (currently only 'fun')".into(),
+                        format!(
+                            "expected a top level declaration (currently only '{}')",
+                            Token::Fun
+                        ),
                     ))
                 }
             }
@@ -1100,7 +1115,8 @@ impl Ast {
 
                     parameters.push(*parameter);
                 }
-                self.evaluate_fun(call.fun_id, parameters).map(|c| c.into())
+                self.evaluate_fun(call.fun_id, parameters, variable_values)
+                    .map(|c| c.into())
             }
             Expr::Assign(variable_id, expr_id) => {
                 let eval = self.evaluate_expr(*expr_id, variable_values)?;
@@ -1158,6 +1174,7 @@ impl Ast {
         &self,
         fun_id: FunId,
         parameters: Vec<Constant>,
+        variable_values: &mut VariableValues,
     ) -> Result<Constant, RuntimeError> {
         let fun = self
             .funs
@@ -1173,14 +1190,21 @@ impl Ast {
             ));
         }
 
-        let mut variable_values = VariableValues::new(parameters);
-        let initial_size = variable_values.values.len();
+        let old_reference = variable_values.reference;
+        variable_values.reference = variable_values.values.len();
+
+        for (id, parameter) in parameters.into_iter().enumerate() {
+            variable_values.introduce(VariableId(id), parameter);
+        }
 
         let result = self
-            .evaluate_block(&fun.body, &mut variable_values)?
+            .evaluate_block(&fun.body, variable_values)?
             .unwrap_on_outer_layer();
 
-        assert_eq!(variable_values.values.len(), initial_size);
+        assert_eq!(
+            variable_values.values.len() - variable_values.reference,
+            fun.variables.len()
+        );
 
         //TODO: Check when parsing fun
         if result.ty() != fun.ty {
@@ -1190,6 +1214,9 @@ impl Ast {
                 result.ty(),
             ));
         }
+
+        variable_values.values.truncate(variable_values.reference);
+        variable_values.reference = old_reference;
 
         Ok(result)
     }
@@ -1249,9 +1276,12 @@ impl Ast {
     }
 
     pub fn evaluate_main(&self) -> Result<Constant, RuntimeError> {
+        let mut variable_values = VariableValues::new();
+
         self.evaluate_fun(
             self.entry_point.ok_or(RuntimeError::NoEntryPoint)?,
             Vec::new(),
+            &mut variable_values,
         )
     }
 
