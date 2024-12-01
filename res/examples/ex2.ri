@@ -6,18 +6,20 @@ fun fib(n: int) -> int {
 
 
     // TODO maybe List(int)
-    val mem: List = List();
+    val mem: List = List.new();
 
     mem.push(0);
     mem.push(1);
 
-    for i in Range(2, n + 1) {
+    val i: int = 2;
+    while i < n + 1 {
         mem.push(mem.get(i - 1) + mem.get(i -2));
+        i = i + 1;
     }
 
      mem.pop()
 }
 
 fun main() -> int {
-    return return fib( 111);;
+    return return fib( 111);;;;;;;;;;;;;;;;;;;;
 }

@@ -2,27 +2,33 @@ use std::{
     cmp::Ordering,
     error::Error,
     fmt::Display,
+    mem::swap,
     ops::{Add, Mul, Sub},
     sync::LazyLock,
 };
 
 use indexmap::{indexmap, map::Entry, IndexMap, IndexSet};
+use itertools::Itertools;
 use thiserror::Error;
 use word::Word;
 
 #[derive(Debug, Error)]
+
+//TODO: Nicer List printing
 pub enum RuntimeError {
     #[error("not (yet) implemented: {0}")]
     NotImplememted(String),
-    #[error("unknown variable '{0}'")]
-    UnknownVariable(Word),
-    //TODO: Nicer
+    //TODO: Obviously not so nice without the name. But it should never happen, right?
+    #[error("unknown variable '{0:?}'")]
+    UnknownVariable(VariableId),
     #[error("arguments '{0:?}' incompatible with parameters '{1:?}'")]
-    IncompatibleParameters(Vec<Constant>, Variables),
+    IncompatibleParameters(Vec<Ty>, Variables),
+    #[error("arguments '{0:?}' incompatible with internal function {1}")]
+    IncompatibleParametersForInternal(Vec<Ty>, InternalFun),
     #[error("missing '{}'", Token::Return)]
     MisingReturn,
     #[error("unknown function '{0}'")]
-    UnknownFunction(Word),
+    UnknownDotFunction(Word),
     #[error("type error: exoected '{0}', found '{1}'")]
     TypeError(Ty, Ty),
     #[error("invalid operation:'{0} {1} {2}'")]
@@ -31,6 +37,12 @@ pub enum RuntimeError {
     WrongReturnType(Word, Ty, Ty),
     #[error("missing entry point (function '{}')", *MAIN)]
     NoEntryPoint,
+    #[error("index '{1}' out of bounds for list {0:?})")]
+    IndexOutOfBounds(Vec<Constant>, IntConstant),
+    #[error("static function '{0}.{1}' not defined)")]
+    StaticFunctionOnWrongType(Ty, InternalFun),
+    #[error("operation '{0}' invalid on empty list")]
+    OperationInvalidOnEmptyList(InternalFun),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -38,25 +50,16 @@ pub enum IntConstant {
     Small(i128),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Constant {
     Int(IntConstant),
     Bool(bool),
     None,
-    List(Vec<Constant>),
+    List(ListId),
+    Ty(Ty),
 }
 
 impl Constant {
-    fn default(ty: Ty) -> Constant {
-        match ty {
-            Ty::Int => Constant::Int(IntConstant::Small(0)),
-            Ty::Bool => Constant::Bool(false),
-            Ty::None => Constant::None,
-            Ty::List => Constant::List(Vec::new()),
-            Ty::Range => todo!(),
-        }
-    }
-
     fn get_bool(&self) -> Result<bool, RuntimeError> {
         if let Constant::Bool(b) = self {
             Ok(*b)
@@ -74,6 +77,7 @@ impl Constant {
             Constant::Bool(_) => Ty::Bool,
             Constant::None => Ty::None,
             Constant::List(_) => Ty::List,
+            Constant::Ty(_) => Ty::Ty,
         }
     }
 }
@@ -94,6 +98,7 @@ impl Display for Constant {
             Constant::None => write!(f, "()"),
             //TODO make it good
             Constant::List(vec) => write!(f, "{vec:?}"),
+            Constant::Ty(ty) => write!(f, "{ty}"),
         }
     }
 }
@@ -146,16 +151,21 @@ pub enum Expr {
     Block(Block),
     //TODO: Test for block here
     If(ExprId, Block),
+    While(ExprId, Block),
     Call(Call),
+    InternalCall(InternalCall),
     Assign(VariableId, ExprId),
     Introduce(VariableId, ExprId),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct VariableId(usize);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ExprId(usize);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListId(usize);
 
 #[derive(Clone, Copy)]
 //TODO pub field
@@ -175,6 +185,49 @@ pub struct Block {
 #[derive(Clone, Copy)]
 pub struct Call {
     fun_id: FunId,
+    arguments: ExprRange,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum InternalFun {
+    New,
+    Push,
+    Get,
+    Pop,
+}
+
+impl Display for InternalFun {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InternalFun::New => write!(f, "new"),
+            InternalFun::Push => write!(f, "push"),
+            InternalFun::Get => write!(f, "get"),
+            InternalFun::Pop => write!(f, "pop"),
+        }
+    }
+}
+
+static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::new(|| {
+    indexmap! {
+        "new".try_into().expect("const") => InternalFun::New,
+        "push".try_into().expect("const") => InternalFun::Push,
+        "get".try_into().expect("const") => InternalFun::Get,
+        "pop".try_into().expect("const") => InternalFun::Pop,
+    }
+});
+
+impl InternalFun {
+    fn get(name: Word) -> Result<Self, ParseError> {
+        WORD_INTERNAL_FUN_MAP
+            .get(&name)
+            .ok_or(ParseError::NotDefinedFunction(name))
+            .copied()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct InternalCall {
+    internal_fun: InternalFun,
     arguments: ExprRange,
 }
 
@@ -214,6 +267,7 @@ impl Variables {
 
 pub struct VariableValues {
     values: Vec<Constant>,
+    lists: Vec<Vec<Constant>>,
 }
 
 impl VariableValues {
@@ -226,7 +280,35 @@ impl VariableValues {
     }
 
     pub fn new(values: Vec<Constant>) -> Self {
-        Self { values }
+        Self {
+            values,
+            lists: Vec::new(),
+        }
+    }
+
+    fn add_list(&mut self) -> ListId {
+        let res = ListId(self.lists.len());
+        self.lists.push(Vec::new());
+        res
+    }
+
+    fn get_list_mut(&mut self, l: ListId) -> &mut Vec<Constant> {
+        &mut self.lists[l.0]
+    }
+
+    fn set(&mut self, variable_id: VariableId, mut new: Constant) -> Result<(), RuntimeError> {
+        let old = self
+            .values
+            .get_mut(variable_id.0)
+            .ok_or(RuntimeError::UnknownVariable(variable_id))?;
+
+        if old.ty() != new.ty() {
+            return Err(RuntimeError::TypeError(old.ty(), new.ty()));
+        }
+
+        swap(old, &mut new);
+
+        Ok(())
     }
 }
 
@@ -411,15 +493,6 @@ impl<'a> TokenStream<'a> {
             stack: Stack::new(),
         }
     }
-
-    fn parse_static(&mut self, ty: Ty) -> Result<Expr, ParseError> {
-        if self.entertain(Token::ParanLeft) {
-            self.expect(Token::ParanRight)?;
-            return Ok(Expr::Constant(Constant::default(ty)));
-        }
-
-        todo!()
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -443,9 +516,9 @@ impl Display for BinaryOperator {
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Stickyness {
+    Comparison,
     Addition,
     Multiplication,
-    Comparison,
 }
 
 impl BinaryOperator {
@@ -545,48 +618,57 @@ impl TokenStream<'_> {
     fn parse_non_binary(&mut self) -> Result<Expr, ParseError> {
         let token = self.next()?;
 
-        match token {
+        let mut expr = match token {
             Token::ParanLeft => {
                 let inner_expr = self.parse_expr()?;
                 self.expect(Token::ParanRight)?;
-                Ok(inner_expr)
+                inner_expr
             }
-            Token::Ty(ty) => self.parse_static(ty),
+            Token::Ty(ty) => Expr::Constant(Constant::Ty(ty)),
             Token::Return => {
                 let expr = self.parse_expr()?;
-                let expr = Expr::Return(self.expressions.add(expr));
-                Ok(expr)
-            }
-            Token::Word(word) => {
-                if self.peek() == Some(Token::ParanLeft) {
-                    let (exprs, _) = self.parse_expression_list_and_has_trailing_separator(
-                        Token::ParanLeft,
-                        Token::Comma,
-                        Token::ParanRight,
-                        false,
-                    )?;
-                    let arguments = self.expressions.add_range(exprs);
 
-                    let expr = Expr::Call(Call {
+                Expr::Return(self.expressions.add(expr))
+            }
+            Token::Word(word) => match self.peek() {
+                Some(Token::ParanLeft) => {
+                    let arguments = self.parse_fun_arguments(None)?;
+
+                    Expr::Call(Call {
                         fun_id: FunId(self.fun_names.insert_full(word).0),
                         arguments,
-                    });
-
-                    Ok(expr)
-                } else {
-                    let expr = Expr::Variable(self.stack.get(&word)?);
-                    Ok(expr)
+                    })
                 }
+                Some(Token::Assign) => {
+                    self.expect(Token::Assign).expect("just peeked");
+                    let expr = self.parse_expr()?;
+
+                    Expr::Assign(self.stack.get(&word)?, self.expressions.add(expr))
+                }
+                _ => Expr::Variable(self.stack.get(&word)?),
+            },
+            Token::IntConstant(int_constant) => Expr::Constant(int_constant),
+            _ => {
+                return Err(ParseError::UnexpectedToken(
+                    token,
+                    "parse_non_binary".into(),
+                ))
             }
-            Token::IntConstant(int_constant) => {
-                let expr = Expr::Constant(int_constant);
-                Ok(expr)
-            }
-            _ => Err(ParseError::UnexpectedToken(
-                token,
-                "parse_non_binary".into(),
-            )),
+        };
+
+        while self.entertain(Token::Dot) {
+            let name = self.expect_word()?;
+
+            let arguments = self.parse_fun_arguments(Some(expr))?;
+
+            let internal_fun = InternalFun::get(name)?;
+            expr = Expr::InternalCall(InternalCall {
+                internal_fun,
+                arguments,
+            })
         }
+
+        Ok(expr)
     }
 
     fn parse_follow_up(&mut self) -> Result<FollowUp, ParseError> {
@@ -619,9 +701,26 @@ impl TokenStream<'_> {
         Ok(expr)
     }
 
+    pub fn parse_while(&mut self) -> Result<Expr, ParseError> {
+        self.expect(Token::While)?;
+
+        let cond = self.parse_expr()?;
+
+        //TODO: Check if boolean
+
+        let while_block = self.parse_block()?;
+
+        let expr = Expr::While(self.expressions.add(cond), while_block);
+        Ok(expr)
+    }
+
     pub fn parse_expr(&mut self) -> Result<Expr, ParseError> {
         if let Some(Token::If) = self.peek() {
             return self.parse_if();
+        }
+
+        if let Some(Token::While) = self.peek() {
+            return self.parse_while();
         }
 
         let mut ast = self.parse_non_binary()?;
@@ -727,10 +826,15 @@ impl TokenStream<'_> {
         separator_token: Token,
         right_token: Token,
         allow_variable_introduction: bool,
+        leading: Option<Expr>,
     ) -> Result<(Vec<Expr>, bool), ParseError> {
         self.expect(left_token)?;
 
         let mut statements = Vec::new();
+
+        if let Some(leading) = leading {
+            statements.push(leading);
+        }
 
         let mut has_trailing_separator = false;
 
@@ -749,7 +853,7 @@ impl TokenStream<'_> {
                 self.expect(Token::Colon)?;
                 //TODO Use type info
                 let _ty = self.expect_ty()?;
-                self.expect(Token::Equals)?;
+                self.expect(Token::Assign)?;
                 let expr = self.parse_expr()?;
 
                 let variable_id = self.stack.push(name)?;
@@ -773,6 +877,7 @@ impl TokenStream<'_> {
                 Token::Semicolon,
                 Token::BraceRight,
                 true,
+                None,
             )?;
 
         self.stack.cut_back_to(old_stack_size);
@@ -782,9 +887,23 @@ impl TokenStream<'_> {
             statements.push(expr);
         }
 
-        let range = self.expressions.add_range(statements);
+        let range: ExprRange = self.expressions.add_range(statements);
 
         Ok(Block::new(range))
+    }
+
+    fn parse_fun_arguments(&mut self, leading: Option<Expr>) -> Result<ExprRange, ParseError> {
+        let (statements, _) = self.parse_expression_list_and_has_trailing_separator(
+            Token::ParanLeft,
+            Token::Comma,
+            Token::ParanRight,
+            false,
+            leading,
+        )?;
+
+        let range = self.expressions.add_range(statements);
+
+        Ok(range)
     }
 }
 
@@ -921,7 +1040,7 @@ impl Ast {
         variable_values: &mut VariableValues,
     ) -> Result<Evaluation, RuntimeError> {
         match self.expressions.get(expr_id) {
-            Expr::Constant(int_constant) => Ok(int_constant.clone().into()),
+            Expr::Constant(int_constant) => Ok((*int_constant).into()),
             Expr::Variable(variable_id) => Ok(variable_values.get(variable_id)?.into()),
             Expr::BinaryOp(lhs_expr, op, rhs_expr) => {
                 let lhs = self.evaluate_expr(*lhs_expr, variable_values)?;
@@ -934,7 +1053,7 @@ impl Ast {
                     return Ok(rhs);
                 };
 
-                Ok(combine_with_operator(lhs.clone(), *op, rhs.clone())?.into())
+                Ok(combine_with_operator(*lhs, *op, *rhs)?.into())
             }
             Expr::Block(block) => self.evaluate_block(block, variable_values),
             Expr::Return(expr) => self
@@ -965,11 +1084,18 @@ impl Ast {
                         return Ok(eval);
                     };
 
-                    parameters.push(parameter.clone());
+                    parameters.push(*parameter);
                 }
                 self.evaluate_fun(call.fun_id, parameters).map(|c| c.into())
             }
-            Expr::Assign(_variable_id, _expr_id) => todo!(),
+            Expr::Assign(variable_id, expr_id) => {
+                let eval = self.evaluate_expr(*expr_id, variable_values)?;
+                let Some(eval) = eval.some_or_please_return() else {
+                    return Ok(eval);
+                };
+                variable_values.set(*variable_id, *eval)?;
+                Ok(Constant::None.into())
+            }
             Expr::Introduce(variable_id, expr_id) => {
                 assert_eq!(variable_values.values.len(), variable_id.0);
 
@@ -980,9 +1106,40 @@ impl Ast {
                     return Ok(eval);
                 };
 
-                variable_values.values.push(expr.clone());
-                Ok(expr.clone().into())
+                variable_values.values.push(*expr);
+                Ok((*expr).into())
             }
+            Expr::InternalCall(internal_call) => {
+                //TODO Duplication to Call
+                let mut parameters = Vec::new();
+                for id in internal_call.arguments.start.0..internal_call.arguments.end.0 {
+                    let eval = self.evaluate_expr(ExprId(id), variable_values)?;
+                    let Some(parameter) = eval.some_or_please_return() else {
+                        return Ok(eval);
+                    };
+
+                    parameters.push(*parameter);
+                }
+                self.evaluate_internal_fun(internal_call.internal_fun, parameters, variable_values)
+                    .map(|c| c.into())
+            }
+            Expr::While(expr_id, block) => loop {
+                let eval = self.evaluate_expr(*expr_id, variable_values)?;
+                let Some(constant) = eval.some_or_please_return() else {
+                    return Ok(eval);
+                };
+
+                let b = constant.get_bool()?;
+
+                if !b {
+                    return Ok(Constant::None.into());
+                }
+
+                let block_result = self.evaluate_block(block, variable_values)?;
+                let Some(_) = block_result.some_or_please_return() else {
+                    return Ok(block_result);
+                };
+            },
         }
     }
 
@@ -1000,7 +1157,7 @@ impl Ast {
 
         if fun.variables.len() != parameters.len() {
             return Err(RuntimeError::IncompatibleParameters(
-                parameters,
+                parameters.iter().map(|c| c.ty()).collect(),
                 fun.variables.clone(),
             ));
         }
@@ -1014,6 +1171,7 @@ impl Ast {
 
         assert_eq!(variable_values.values.len(), initial_size);
 
+        //TODO: Check when parsing fun
         if result.ty() != fun.ty {
             return Err(RuntimeError::WrongReturnType(
                 fun.name.clone(),
@@ -1023,6 +1181,60 @@ impl Ast {
         }
 
         Ok(result)
+    }
+
+    pub fn evaluate_internal_fun(
+        &self,
+        internal_fun: InternalFun,
+        parameters: Vec<Constant>,
+        variable_values: &mut VariableValues,
+    ) -> Result<Constant, RuntimeError> {
+        match internal_fun {
+            InternalFun::New => {
+                if let Some(&Constant::Ty(ty)) = parameters.iter().collect_single() {
+                    match ty {
+                        Ty::List => return Ok(Constant::List(variable_values.add_list())),
+                        _ => return Err(RuntimeError::StaticFunctionOnWrongType(ty, internal_fun)),
+                    }
+                }
+            }
+            InternalFun::Push => {
+                if let Some((&Constant::List(l), &c)) = parameters.iter().collect_tuple() {
+                    let list = variable_values.get_list_mut(l);
+                    list.push(c);
+                    return Ok(Constant::None);
+                }
+            }
+            InternalFun::Get => {
+                if let Some((&Constant::List(l), &Constant::Int(i))) =
+                    parameters.iter().collect_tuple()
+                {
+                    let list = variable_values.get_list_mut(l);
+                    let IntConstant::Small(id) = i;
+                    let id: usize = id
+                        .try_into()
+                        .map_err(|_| RuntimeError::IndexOutOfBounds(list.clone(), i))?;
+                    return list
+                        .get(id)
+                        .ok_or_else(|| RuntimeError::IndexOutOfBounds(list.clone(), i))
+                        .copied();
+                }
+            }
+
+            InternalFun::Pop => {
+                if let Some(&Constant::List(l)) = parameters.iter().collect_single() {
+                    let list = variable_values.get_list_mut(l);
+                    return list.pop().ok_or_else(|| {
+                        RuntimeError::OperationInvalidOnEmptyList(InternalFun::Pop)
+                    });
+                }
+            }
+        }
+
+        Err(RuntimeError::IncompatibleParametersForInternal(
+            parameters.iter().map(|c| c.ty()).collect(),
+            internal_fun,
+        ))
     }
 
     pub fn evaluate_main(&self) -> Result<Constant, RuntimeError> {
@@ -1308,7 +1520,7 @@ static SINGLE_DIGIT_TOKEN_MAP: LazyLock<IndexMap<char, Token>> = std::sync::Lazy
         '{' => Token::BraceLeft,
         '}' => Token::BraceRight,
         ':' => Token::Colon,
-        '=' => Token::Equals,
+        '=' => Token::Assign,
         '.' => Token::Dot,
 
     }
@@ -1322,6 +1534,7 @@ static KEYWORD_TOKEN_MAP: LazyLock<IndexMap<&str, Token>> = std::sync::LazyLock:
         "Range" => Token::Ty(Ty::Range),
         "int" => Token::Ty(Ty::Int),
         "if" => Token::If,
+        "while" => Token::While,
         "call" => Token::Call,
         "val" => Token::Val,
     }
@@ -1380,6 +1593,7 @@ pub enum Ty {
     None,
     List,
     Range,
+    Ty,
 }
 
 impl Display for Ty {
@@ -1390,6 +1604,7 @@ impl Display for Ty {
             Ty::Bool => write!(f, "bool"),
             Ty::Range => write!(f, "Range"),
             Ty::None => write!(f, "()"),
+            Ty::Ty => write!(f, "TYPE"),
         }
     }
 }
@@ -1404,8 +1619,9 @@ pub enum Token {
     Semicolon,
     Colon,
     Arrow,
+    While,
     Comma,
-    Equals,
+    Assign,
     ParanLeft,
     ParanRight,
     BraceLeft,
@@ -1436,9 +1652,27 @@ impl Display for Token {
             Token::Fun => write!(f, "fun"),
             Token::If => write!(f, "if"),
             Token::Call => write!(f, "call"),
-            Token::Equals => write!(f, "="),
+            Token::Assign => write!(f, "="),
             Token::Dot => write!(f, "."),
             Token::Val => write!(f, "val"),
+            Token::While => write!(f, "while"),
         }
     }
 }
+
+pub trait MyItertools: Iterator {
+    fn collect_single(mut self) -> Option<Self::Item>
+    where
+        Self: Sized,
+    {
+        let item = self.next()?;
+
+        if self.next().is_some() {
+            None
+        } else {
+            Some(item)
+        }
+    }
+}
+
+impl<T> MyItertools for T where T: Iterator + ?Sized {}

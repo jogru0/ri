@@ -24,5 +24,8 @@ fn ex0_clean() {
 fn ex2() {
     let assert = run("res/examples/ex2.ri");
 
-    assert.success().code(0).stdout("Result: 55\n");
+    assert
+        .success()
+        .code(0)
+        .stdout("Result: 70492524767089125814114\n");
 }
