@@ -36,3 +36,10 @@ fn ex3() {
 
     assert.success().code(0).stdout("Result: 3\n");
 }
+
+#[test]
+fn ex4() {
+    let assert = run("res/examples/ex4.ri");
+
+    assert.success().code(0).stdout("Result: 2\n");
+}

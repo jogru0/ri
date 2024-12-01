@@ -703,9 +703,13 @@ impl TokenStream<'_> {
                 Ok(FollowUp::BinaryOperator(op))
             }
             None
-            | Some(Token::Semicolon | Token::BraceLeft | Token::ParanRight | Token::BraceRight) => {
-                Ok(FollowUp::End)
-            }
+            | Some(
+                Token::Semicolon
+                | Token::Comma
+                | Token::BraceLeft
+                | Token::ParanRight
+                | Token::BraceRight,
+            ) => Ok(FollowUp::End),
             Some(follow_up_token) => Err(ParseError::UnexpectedToken(
                 follow_up_token.clone(),
                 "parse_follow_up".into(),
@@ -1173,6 +1177,7 @@ impl Ast {
     pub fn evaluate_fun(
         &self,
         fun_id: FunId,
+        //TODO: This allocation slows us down.
         parameters: Vec<Constant>,
         variable_values: &mut VariableValues,
     ) -> Result<Constant, RuntimeError> {
