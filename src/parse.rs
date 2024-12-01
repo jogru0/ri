@@ -29,7 +29,7 @@ pub enum RuntimeError {
     MisingReturn,
     #[error("unknown function '{0}'")]
     UnknownDotFunction(Word),
-    #[error("type error: exoected '{0}', found '{1}'")]
+    #[error("type error: expected '{0}', found '{1}'")]
     TypeError(Ty, Ty),
     #[error("invalid operation:'{0} {1} {2}'")]
     InvalidBinaryOperation(Constant, BinaryOperator, Constant),
@@ -309,6 +309,14 @@ impl VariableValues {
         swap(old, &mut new);
 
         Ok(())
+    }
+
+    fn introduce(&mut self, variable_id: VariableId, initial: Constant) {
+        //TODO: Can't happen, can it?
+        assert_eq!(variable_id.0, self.values.len());
+
+        //TODO: Typecheck?
+        self.values.push(initial);
     }
 }
 
@@ -616,6 +624,11 @@ impl TokenStream<'_> {
     }
 
     fn parse_non_binary(&mut self) -> Result<Expr, ParseError> {
+        //TODO: Combine with match, peek vs next issue
+        if let Some(Token::BraceLeft) = self.peek() {
+            return self.parse_block().map(Expr::Block);
+        }
+
         let token = self.next()?;
 
         let mut expr = match token {
@@ -854,8 +867,9 @@ impl TokenStream<'_> {
                 //TODO Use type info
                 let _ty = self.expect_ty()?;
                 self.expect(Token::Assign)?;
-                let expr = self.parse_expr()?;
 
+                //SYNC(INTRO_AFTER_EVAL) Variable gets introduced after evaluating its initial value.
+                let expr = self.parse_expr()?;
                 let variable_id = self.stack.push(name)?;
 
                 statements.push(Expr::Introduce(variable_id, self.expressions.add(expr)));
@@ -1097,17 +1111,14 @@ impl Ast {
                 Ok(Constant::None.into())
             }
             Expr::Introduce(variable_id, expr_id) => {
-                assert_eq!(variable_values.values.len(), variable_id.0);
-
-                //TODO: let a = { let b = and then order?
-
+                //SYNC(INTRO_AFTER_EVAL) Variable gets introduced after evaluating its initial value.
                 let eval = self.evaluate_expr(*expr_id, variable_values)?;
-                let Some(expr) = eval.some_or_please_return() else {
+                let Some(eval) = eval.some_or_please_return() else {
                     return Ok(eval);
                 };
+                variable_values.introduce(*variable_id, *eval);
 
-                variable_values.values.push(*expr);
-                Ok((*expr).into())
+                Ok(Constant::None.into())
             }
             Expr::InternalCall(internal_call) => {
                 //TODO Duplication to Call
@@ -1533,6 +1544,8 @@ static KEYWORD_TOKEN_MAP: LazyLock<IndexMap<&str, Token>> = std::sync::LazyLock:
         "List" => Token::Ty(Ty::List),
         "Range" => Token::Ty(Ty::Range),
         "int" => Token::Ty(Ty::Int),
+        //TODO value vs type
+        "None" => Token::Ty(Ty::None),
         "if" => Token::If,
         "while" => Token::While,
         "call" => Token::Call,
@@ -1603,7 +1616,7 @@ impl Display for Ty {
             Ty::Int => write!(f, "int"),
             Ty::Bool => write!(f, "bool"),
             Ty::Range => write!(f, "Range"),
-            Ty::None => write!(f, "()"),
+            Ty::None => write!(f, "None"),
             Ty::Ty => write!(f, "TYPE"),
         }
     }

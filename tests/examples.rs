@@ -29,3 +29,10 @@ fn ex2() {
         .code(0)
         .stdout("Result: 70492524767089125814114\n");
 }
+
+#[test]
+fn ex3() {
+    let assert = run("res/examples/ex3.ri");
+
+    assert.success().code(0).stdout("Result: 3\n");
+}

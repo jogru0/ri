@@ -1,0 +1,12 @@
+fun main() -> int {
+    //TODO Loop list issue
+    val list: List = List.new();
+
+     val a: int = {val b: int = {{3}}; b};
+
+    // a = 3;
+
+    //TODO if/while inside expr
+
+    a
+}
