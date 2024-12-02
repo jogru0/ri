@@ -63,7 +63,7 @@ fun main() -> int {
     val len = report_strings.len();
     val reports = List.new();
     while i < len {
-        reports.push(parse_numbers(report_strings.get(i)));
+        reports.push(report_strings.get(i).parse_numbers());
         i = i + 1;
     }
 

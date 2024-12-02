@@ -30,7 +30,7 @@ fun main() -> int {
     val i = 0;
     val len = right.len();
     while i < len {
-        sum = sum + (right.get(i) - left.get(i)).abs();
+        sum = sum + abs(right.get(i) - left.get(i));
 
         i = i+1;
     }

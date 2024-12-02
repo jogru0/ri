@@ -186,7 +186,6 @@ pub enum Expr {
     If(ExprId, Block, Block),
     While(ExprId, Block),
     Call(Call),
-    InternalCall(InternalCall),
     Assign(VariableId, ExprId),
     Introduce(VariableId, ExprId),
     For(VariableId, Option<VariableId>, ExprId, Block),
@@ -216,10 +215,16 @@ pub struct Block {
     statements: ExprRange,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Call {
-    fun_id: FunId,
+    callable: Callable,
     arguments: ExprRange,
+}
+
+#[derive(Clone, Copy)]
+pub enum Callable {
+    Fun(FunId),
+    InternalFun(InternalFun),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -275,18 +280,9 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
 });
 
 impl InternalFun {
-    fn get(name: Word) -> Result<Self, ParseError> {
-        WORD_INTERNAL_FUN_MAP
-            .get(&name)
-            .ok_or(ParseError::NotDefinedFunction(name))
-            .copied()
+    fn get(name: &Word) -> Option<Self> {
+        WORD_INTERNAL_FUN_MAP.get(name).copied()
     }
-}
-
-#[derive(Clone, Copy)]
-pub struct InternalCall {
-    internal_fun: InternalFun,
-    arguments: ExprRange,
 }
 
 impl Block {
@@ -726,14 +722,7 @@ impl TokenStream<'_> {
                 Expr::Return(self.expressions.add(expr))
             }
             Token::Word(word) => match self.peek() {
-                Some(Token::ParanLeft) => {
-                    let arguments = self.parse_fun_arguments(None)?;
-
-                    Expr::Call(Call {
-                        fun_id: FunId(self.fun_names.insert_full(word).0),
-                        arguments,
-                    })
-                }
+                Some(Token::ParanLeft) => self.parse_fun_arguments(word, None)?,
                 Some(Token::Assign) => {
                     self.expect(Token::Assign).expect("just peeked");
                     let expr = self.parse_expr()?;
@@ -753,14 +742,7 @@ impl TokenStream<'_> {
 
         while self.entertain(Token::Dot) {
             let name = self.expect_word()?;
-
-            let arguments = self.parse_fun_arguments(Some(expr))?;
-
-            let internal_fun = InternalFun::get(name)?;
-            expr = Expr::InternalCall(InternalCall {
-                internal_fun,
-                arguments,
-            })
+            expr = self.parse_fun_arguments(name, Some(expr))?;
         }
 
         Ok(expr)
@@ -1043,7 +1025,11 @@ impl TokenStream<'_> {
         Ok(Block::new(range))
     }
 
-    fn parse_fun_arguments(&mut self, leading: Option<Expr>) -> Result<ExprRange, ParseError> {
+    fn parse_fun_arguments(
+        &mut self,
+        name: Word,
+        leading: Option<Expr>,
+    ) -> Result<Expr, ParseError> {
         let (statements, _) = self.parse_expression_list_and_has_trailing_separator(
             Token::ParanLeft,
             Token::Comma,
@@ -1054,7 +1040,16 @@ impl TokenStream<'_> {
 
         let range = self.expressions.add_range(statements);
 
-        Ok(range)
+        let callable = if let Some(internal_fun) = InternalFun::get(&name) {
+            Callable::InternalFun(internal_fun)
+        } else {
+            Callable::Fun(FunId(self.fun_names.insert_full(name).0))
+        };
+
+        Ok(Expr::Call(Call {
+            callable,
+            arguments: range,
+        }))
     }
 }
 
@@ -1251,8 +1246,15 @@ impl Ast {
 
                     parameters.push(parameter.clone());
                 }
-                self.evaluate_fun(call.fun_id, parameters, variable_values)
-                    .map(|c| c.into())
+
+                let result = match call.callable {
+                    Callable::Fun(fun_id) => self.evaluate_fun(fun_id, parameters, variable_values),
+                    Callable::InternalFun(internal_fun) => {
+                        self.evaluate_internal_fun(internal_fun, parameters)
+                    }
+                }?;
+
+                Ok(result.into())
             }
             Expr::Assign(variable_id, expr_id) => {
                 let eval = self.evaluate_expr(*expr_id, variable_values)?;
@@ -1271,20 +1273,6 @@ impl Ast {
                 variable_values.introduce(*variable_id, eval.clone());
 
                 Ok(Constant::None.into())
-            }
-            Expr::InternalCall(internal_call) => {
-                //TODO Duplication to Call
-                let mut parameters = Vec::new();
-                for id in internal_call.arguments.start.0..internal_call.arguments.end.0 {
-                    let eval = self.evaluate_expr(ExprId(id), variable_values)?;
-                    let Some(parameter) = eval.some_or_please_return() else {
-                        return Ok(eval);
-                    };
-
-                    parameters.push(parameter.clone());
-                }
-                self.evaluate_internal_fun(internal_call.internal_fun, parameters)
-                    .map(|c| c.into())
             }
             Expr::While(expr_id, block) => loop {
                 let eval = self.evaluate_expr(*expr_id, variable_values)?;
