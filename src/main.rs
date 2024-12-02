@@ -31,7 +31,7 @@ impl Debug for MainError {
 
 fn main() -> Result<(), MainError> {
     env_logger::Builder::new()
-        .filter_level(log::LevelFilter::Warn)
+        .filter_level(log::LevelFilter::Info)
         // .filter_module("ri", log::LevelFilter::Debug)
         .init();
 

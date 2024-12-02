@@ -3,11 +3,8 @@ fun parse_numbers(s: List) -> List {
     val number_strings: List = s.split_whitespace();
 
     val numbers: List = List.new();
-    val i: int = 0;
-    val len: int = number_strings.len();
-    while i < len {
-        numbers.push(number_strings.get(i).parse(int));
-        i = i + 1;
+    for ns in number_strings {
+        numbers.push(ns.parse(int));
     }
     numbers
 }

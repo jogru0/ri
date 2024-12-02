@@ -12,7 +12,7 @@ use std::{
 
 use indexmap::{indexmap, map::Entry, IndexMap, IndexSet};
 use itertools::Itertools;
-use log::debug;
+use log::{debug, info};
 use thiserror::Error;
 use word::Word;
 
@@ -46,12 +46,14 @@ pub enum RuntimeError {
     IndexOutOfBounds(Vec<Constant>, IntConstant),
     #[error("static function '{0}.{1}' not defined)")]
     StaticFunctionOnWrongType(Ty, InternalFun),
-    #[error("operation '{0}' invalid on empty list")]
-    OperationInvalidOnEmptyList(InternalFun),
+    #[error("operation '{0}' invalid on '{1:?}'")]
+    InternalOperationInvalid(InternalFun, Vec<Constant>),
     #[error("encountered problem accessing file '{1}': {0}")]
     Io(std::io::Error, String),
     #[error("cannot parse '{0}' as '{1}': {2}")]
     Parse(String, Ty, std::num::ParseIntError),
+    #[error("cannot iterate over '{0}'")]
+    NotIterable(Constant),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -187,6 +189,7 @@ pub enum Expr {
     InternalCall(InternalCall),
     Assign(VariableId, ExprId),
     Introduce(VariableId, ExprId),
+    For(VariableId, Option<VariableId>, ExprId, Block),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -222,6 +225,7 @@ pub struct Call {
 #[derive(Clone, Copy, Debug)]
 pub enum InternalFun {
     New,
+    Debug,
     Push,
     Get,
     Pop,
@@ -248,6 +252,7 @@ impl Display for InternalFun {
             InternalFun::Sort => write!(f, "sort"),
             InternalFun::Abs => write!(f, "abs"),
             InternalFun::Lines => write!(f, "lines"),
+            InternalFun::Debug => write!(f, "debug"),
         }
     }
 }
@@ -265,6 +270,7 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
         "sort".try_into().expect("const") => InternalFun::Sort,
         "abs".try_into().expect("const") => InternalFun::Abs,
         "lines".try_into().expect("const") => InternalFun::Lines,
+        "debug".try_into().expect("const") => InternalFun::Debug,
     }
 });
 
@@ -818,6 +824,37 @@ impl TokenStream<'_> {
         Ok(expr)
     }
 
+    pub fn parse_for(&mut self) -> Result<Expr, ParseError> {
+        self.expect(Token::For)?;
+
+        let introduced0 = self.expect_word()?;
+
+        let introduced1 = if self.entertain(Token::Comma) {
+            Some(self.expect_word()?)
+        } else {
+            None
+        };
+
+        self.expect(Token::In)?;
+
+        let iterable = self.parse_expr()?;
+
+        let old_stack_size = self.stack.len();
+        let var0 = self.stack.push(introduced0)?;
+        let var1 = if let Some(word) = introduced1 {
+            Some(self.stack.push(word)?)
+        } else {
+            None
+        };
+
+        let block = self.parse_block()?;
+
+        self.stack.cut_back_to(old_stack_size);
+
+        let expr = Expr::For(var0, var1, self.expressions.add(iterable), block);
+        Ok(expr)
+    }
+
     pub fn parse_expr(&mut self) -> Result<Expr, ParseError> {
         if let Some(Token::If) = self.peek() {
             return self.parse_if();
@@ -825,6 +862,10 @@ impl TokenStream<'_> {
 
         if let Some(Token::While) = self.peek() {
             return self.parse_while();
+        }
+
+        if let Some(Token::For) = self.peek() {
+            return self.parse_for();
         }
 
         let mut ast = self.parse_non_binary()?;
@@ -1262,6 +1303,51 @@ impl Ast {
                     return Ok(block_result);
                 };
             },
+            Expr::For(var0, var1, iterable, block) => {
+                let iterable = self.evaluate_expr(*iterable, variable_values)?;
+                let Some(iterable) = iterable.some_or_please_return() else {
+                    return Ok(iterable);
+                };
+
+                let iter = match iterable {
+                    Constant::List(rc) => rc.borrow().clone(),
+                    _ => return Err(RuntimeError::NotIterable(iterable.clone())),
+                };
+
+                match var1 {
+                    Some(var1) => {
+                        for (i, c) in iter.into_iter().enumerate() {
+                            variable_values
+                                .introduce(*var0, Constant::Int(IntConstant::Small(i as i128)));
+                            variable_values.introduce(*var1, c);
+
+                            let eval = self.evaluate_block(block, variable_values)?;
+
+                            variable_values.values.pop();
+                            variable_values.values.pop();
+
+                            let Some(_) = eval.some_or_please_return() else {
+                                return Ok(eval);
+                            };
+                        }
+                    }
+                    None => {
+                        for c in iter.into_iter() {
+                            variable_values.introduce(*var0, c);
+
+                            let eval = self.evaluate_block(block, variable_values)?;
+
+                            variable_values.values.pop();
+
+                            let Some(_) = eval.some_or_please_return() else {
+                                return Ok(eval);
+                            };
+                        }
+                    }
+                }
+
+                Ok(Constant::None.into())
+            }
         }
     }
 
@@ -1364,7 +1450,7 @@ impl Ast {
             InternalFun::Pop => {
                 if let Some(Constant::List(list)) = parameters.iter().collect_single() {
                     return list.borrow_mut().pop().ok_or_else(|| {
-                        RuntimeError::OperationInvalidOnEmptyList(InternalFun::Pop)
+                        RuntimeError::InternalOperationInvalid(internal_fun, parameters.clone())
                     });
                 }
             }
@@ -1405,15 +1491,27 @@ impl Ast {
                 }
             }
             InternalFun::Parse => {
-                if let Some((Constant::List(list), Constant::Ty(Ty::Int))) =
+                if let Some((Constant::List(list), Constant::Ty(ty))) =
                     parameters.iter().collect_tuple()
                 {
                     let string = try_list_to_string(&list.borrow())?;
-                    let i: i128 = string
-                        .parse()
-                        .map_err(|err| RuntimeError::Parse(string, Ty::Int, err))?;
 
-                    return Ok(Constant::Int(IntConstant::Small(i)));
+                    let res = match ty {
+                        Ty::Int => {
+                            let i: i128 = string
+                                .parse()
+                                .map_err(|err| RuntimeError::Parse(string, Ty::Int, err))?;
+                            Constant::Int(IntConstant::Small(i))
+                        }
+                        _ => {
+                            return Err(RuntimeError::InternalOperationInvalid(
+                                internal_fun,
+                                parameters,
+                            ))
+                        }
+                    };
+
+                    return Ok(res);
                 }
             }
             InternalFun::Sort => {
@@ -1448,6 +1546,12 @@ impl Ast {
                         .collect_vec();
 
                     return Ok(result.into());
+                }
+            }
+            InternalFun::Debug => {
+                if let Some(c) = parameters.iter().collect_single() {
+                    info!("[Debug] {c}");
+                    return Ok(c.clone());
                 }
             }
         }
@@ -1831,6 +1935,10 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
         Some(Token::Else)
     } else if keyword == "while" {
         Some(Token::While)
+    } else if keyword == "for" {
+        Some(Token::For)
+    } else if keyword == "in" {
+        Some(Token::In)
     } else if keyword == "call" {
         Some(Token::Call)
     } else if keyword == "val" {
@@ -1940,6 +2048,8 @@ pub enum Token {
     If,
     Call,
     Dot,
+    For,
+    In,
 }
 
 impl Display for Token {
@@ -1966,6 +2076,8 @@ impl Display for Token {
             Token::Dot => write!(f, "."),
             Token::Val => write!(f, "val"),
             Token::While => write!(f, "while"),
+            Token::For => write!(f, "for"),
+            Token::In => write!(f, "in"),
         }
     }
 }
