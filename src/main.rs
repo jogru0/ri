@@ -1,7 +1,7 @@
 use std::{env::args, fmt::Debug, fs::read_to_string, io::Error};
 
 use log::error;
-use ri::parse::{ParseError, RuntimeError, SourceTokenizeError, Tokens};
+use ri::parse::{ModuleError, ParseError, RuntimeError, SourceTokenizeError, TokenStream, Tokens};
 use thiserror::Error;
 
 #[derive(Error)]
@@ -14,8 +14,8 @@ enum MainError {
     ParseError(#[from] ParseError),
     #[error("Runtime Error: {0}")]
     RuntimeError(#[from] RuntimeError),
-    #[error("Io Error for '{0}': {1}")]
-    IoError(String, Error),
+    #[error("Module Error: {0}")]
+    ModuleError(#[from] ModuleError),
 }
 
 // Make main use Display, not Debug, for error reporting.
@@ -39,9 +39,7 @@ fn main() -> Result<(), MainError> {
 
     let path = args.get(1).ok_or(MainError::NoSourceFile)?;
 
-    let code = read_to_string(&args[1]).map_err(|err| MainError::IoError(path.into(), err))?;
-
-    let tokens = Tokens::from_code(&code, path.clone())?;
+    let tokens = TokenStream::new(path.clone())?;
 
     let ast = tokens.parse()?;
 

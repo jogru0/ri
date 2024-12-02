@@ -1,0 +1,7 @@
+fun map(list: List, callable: Callable) -> List {
+    val result = List.new();
+    for entry in list {
+        result.push(callable.invoke(entry))
+    }
+    result
+}

@@ -535,7 +535,21 @@ fn combine_with_operator(
 }
 
 #[derive(Debug, Error)]
+pub enum ModuleError {
+    #[error("Tokenize Error: {0}")]
+    SourceTokenizeError(#[from] SourceTokenizeError),
+    #[error("Parse Error: {0}")]
+    ParseError(ParseError),
+    #[error("Io Error for '{0}': {1}")]
+    IoError(String, std::io::Error),
+}
+
+#[derive(Debug, Error)]
 pub enum ParseError {
+    #[error("in module '{0}': {1}")]
+    ModuleError(Word, Box<ModuleError>),
+    #[error("in module '{0}': {1}")]
+    TokenizeErrorInModule(Word, SourceTokenizeError),
     #[error("unexpected end of stream")]
     UnexpectedEndOfStream,
     #[error("variable '{0}' not defined")]
@@ -572,8 +586,8 @@ impl Tokens {
     }
 }
 
-pub struct TokenStream<'a> {
-    tokens: &'a Tokens,
+pub struct TokenStream {
+    tokens: Tokens,
     index: usize,
     #[expect(dead_code)]
     int_variables: IndexSet<Word>,
@@ -581,18 +595,26 @@ pub struct TokenStream<'a> {
     pub expressions: Expressions,
     fun_names: IndexSet<Word>,
     stack: Stack,
+    path: String,
 }
 
-impl<'a> TokenStream<'a> {
-    pub fn new(tokens: &'a Tokens) -> Self {
-        Self {
+impl TokenStream {
+    //TODO rename to from file?
+    pub fn new(path: String, name: &Word) -> Result<Self, ModuleError> {
+        let file = path.clone() + &name.0;
+        let code = read_to_string(&file).map_err(|err| ModuleError::IoError(file.clone(), err))?;
+
+        let tokens = Tokens::from_code(&code, file)?;
+
+        Ok(Self {
             tokens,
             index: 0,
             int_variables: IndexSet::new(),
             expressions: Expressions::new(),
             fun_names: IndexSet::new(),
             stack: Stack::new(),
-        }
+            path,
+        })
     }
 }
 
@@ -687,7 +709,7 @@ impl Stack {
     }
 }
 
-impl TokenStream<'_> {
+impl TokenStream {
     pub fn is_fully_parsed(&self) -> bool {
         self.index == self.tokens.get().len()
     }
@@ -1062,6 +1084,62 @@ impl TokenStream<'_> {
         Ok(Block::new(range))
     }
 
+    pub fn parse(mut self) -> Result<Ast, ParseError> {
+        let mut fun_set = IndexMap::new();
+
+        loop {
+            match self.peek() {
+                None => break,
+                Some(Token::Fun) => {
+                    let fun: Fun = self.parse_fun()?;
+                    match fun_set.entry(fun.name.clone()) {
+                        Entry::Occupied(_) => {
+                            return Err(ParseError::AlreadyDefinedFunction(fun.name))
+                        }
+                        Entry::Vacant(vacant_entry) => {
+                            self.fun_names.insert(fun.name.clone());
+                            vacant_entry.insert(fun);
+                        }
+                    }
+                }
+                Some(Token::Import) => {
+                    self.next().expect("just peeked");
+                    let module = self.expect_word()?;
+                    self.expect(Token::Semicolon)?;
+
+                    let sub_ts = TokenStream::new(self.path, &module)
+                        .map_err(|err| ParseError::ModuleError(module, err.into()))?;
+
+                    todo!()
+                }
+                Some(unexpected) => {
+                    return Err(ParseError::UnexpectedToken(
+                        unexpected,
+                        "expected a top level declaration)".into(),
+                    ))
+                }
+            }
+        }
+
+        // This should be implicit by the above code.
+        assert!(self.is_fully_parsed());
+
+        let entry_point = self.fun_names.get_index_of(&*MAIN).map(FunId);
+        //TODO: Verify that there are no arguments for main?
+
+        let mut funs = Vec::new();
+
+        for name in self.fun_names {
+            funs.push(
+                fun_set
+                    .swap_remove(&name)
+                    .ok_or(ParseError::NotDefinedFunction(name))?,
+            );
+        }
+
+        Ok(Ast::new(funs, self.expressions, entry_point))
+    }
+
     fn parse_fun_arguments(
         &mut self,
         name: Word,
@@ -1087,59 +1165,6 @@ impl TokenStream<'_> {
             callable,
             arguments: range,
         }))
-    }
-}
-
-impl Tokens {
-    pub fn parse(&self) -> Result<Ast, ParseError> {
-        let mut fun_set = IndexMap::new();
-
-        let mut ts = TokenStream::new(self);
-
-        loop {
-            match ts.peek() {
-                None => break,
-                Some(Token::Fun) => {
-                    let fun: Fun = ts.parse_fun()?;
-                    match fun_set.entry(fun.name.clone()) {
-                        Entry::Occupied(_) => {
-                            return Err(ParseError::AlreadyDefinedFunction(fun.name))
-                        }
-                        Entry::Vacant(vacant_entry) => {
-                            ts.fun_names.insert(fun.name.clone());
-                            vacant_entry.insert(fun);
-                        }
-                    }
-                }
-                Some(unexpected) => {
-                    return Err(ParseError::UnexpectedToken(
-                        unexpected,
-                        format!(
-                            "expected a top level declaration (currently only '{}')",
-                            Token::Fun
-                        ),
-                    ))
-                }
-            }
-        }
-
-        // This should be implicit by the above code.
-        assert!(ts.is_fully_parsed());
-
-        let entry_point = ts.fun_names.get_index_of(&*MAIN).map(FunId);
-        //TODO: Verify that there are no arguments for main?
-
-        let mut funs = Vec::new();
-
-        for name in ts.fun_names {
-            funs.push(
-                fun_set
-                    .swap_remove(&name)
-                    .ok_or(ParseError::NotDefinedFunction(name))?,
-            );
-        }
-
-        Ok(Ast::new(funs, ts.expressions, entry_point))
     }
 }
 
@@ -1968,6 +1993,8 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
         Some(Token::Fun)
     } else if keyword == "return" {
         Some(Token::Return)
+    } else if keyword == "import" {
+        Some(Token::Import)
     } else if keyword == "List" {
         Some(Token::Ty(Ty::List))
     } else if keyword == "Range" {
@@ -2009,8 +2036,9 @@ pub mod word {
 
     use super::TokenizeError;
 
+    //TODO member pub
     #[derive(Hash, PartialEq, Eq, Debug, Clone)]
-    pub struct Word(String);
+    pub struct Word(pub String);
 
     impl TryFrom<String> for Word {
         type Error = TokenizeError;
@@ -2079,6 +2107,7 @@ impl Display for Ty {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Token {
     Return,
+    Import,
     Else,
     Ty(Ty),
     Word(Word),
@@ -2129,6 +2158,7 @@ impl Display for Token {
             Token::While => write!(f, "while"),
             Token::For => write!(f, "for"),
             Token::In => write!(f, "in"),
+            Token::Import => write!(f, "import"),
         }
     }
 }
