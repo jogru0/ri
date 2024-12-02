@@ -32,7 +32,7 @@ impl Debug for MainError {
 fn main() -> Result<(), MainError> {
     env_logger::Builder::new()
         .filter_level(log::LevelFilter::Warn)
-        .filter_module("ri", log::LevelFilter::Debug)
+        // .filter_module("ri", log::LevelFilter::Debug)
         .init();
 
     let args: Vec<String> = args().collect();

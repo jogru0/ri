@@ -1,0 +1,87 @@
+
+fun parse_numbers(s: List) -> List {
+    val number_strings: List = s.split_whitespace();
+
+    val numbers: List = List.new();
+    val i: int = 0;
+    val len: int = number_strings.len();
+    while i < len {
+        numbers.push(number_strings.get(i).parse(int));
+        i = i + 1;
+    }
+    numbers
+}
+
+fun is_valid_report(report: List) -> bool {
+    val len = report.len();
+    if len < 2 {
+        return true;
+    }
+
+    val last = report.get(0);
+    val found_inc = false;
+    val found_dec = false;
+
+    val i = 1;
+    while i < len {
+        val new = report.get(i);
+
+        val diff = new - last;
+        val adiff = diff.abs();
+
+        if adiff < 1 { 
+            return false;
+        }
+
+        if 3 < adiff { 
+            return false;
+        }
+
+        if diff < 0 {
+            found_dec = true;
+        } else {
+            found_inc = true;
+        }
+        
+        last = new;
+        
+        i = i+1;
+    }
+
+    if found_dec {
+        if found_inc {
+            return false;
+        }
+    }
+
+    true 
+}
+
+fun main() -> int {
+    val input_string: List = List.from_file("res/aoc/2.txt");
+
+    val report_strings: List = input_string.lines();
+
+    val i = 0;
+    val len = report_strings.len();
+    val reports = List.new();
+    while i < len {
+        reports.push(parse_numbers(report_strings.get(i)));
+        i = i + 1;
+    }
+
+    i = 0;
+    val sum = 0;
+    while i < len {
+        if is_valid_report(reports.get(i)) {
+            sum = sum + 1;
+        }
+        i = i + 1;
+    }
+
+    
+
+
+    sum
+
+}

@@ -12,6 +12,7 @@ use std::{
 
 use indexmap::{indexmap, map::Entry, IndexMap, IndexSet};
 use itertools::Itertools;
+use log::debug;
 use thiserror::Error;
 use word::Word;
 
@@ -207,7 +208,7 @@ pub struct ExprRange {
     end: ExprId,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Block {
     statements: ExprRange,
 }
@@ -230,6 +231,7 @@ pub enum InternalFun {
     Parse,
     Sort,
     Abs,
+    Lines,
 }
 
 impl Display for InternalFun {
@@ -245,6 +247,7 @@ impl Display for InternalFun {
             InternalFun::Parse => write!(f, "parse"),
             InternalFun::Sort => write!(f, "sort"),
             InternalFun::Abs => write!(f, "abs"),
+            InternalFun::Lines => write!(f, "lines"),
         }
     }
 }
@@ -261,6 +264,7 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
         "parse".try_into().expect("const") => InternalFun::Parse,
         "sort".try_into().expect("const") => InternalFun::Sort,
         "abs".try_into().expect("const") => InternalFun::Abs,
+        "lines".try_into().expect("const") => InternalFun::Lines,
     }
 });
 
@@ -1053,6 +1057,7 @@ impl Tokens {
         //TODO: Verify that there are no arguments for main?
 
         let mut funs = Vec::new();
+
         for name in ts.fun_names {
             funs.push(
                 fun_set
@@ -1118,7 +1123,7 @@ pub struct Ast {
 // }
 
 impl Ast {
-    fn evaluate_block(
+    fn evaluate_block_unscoped(
         &self,
         block: &Block,
         variable_values: &mut VariableValues,
@@ -1126,12 +1131,9 @@ impl Ast {
         if block.statements.start == block.statements.end {
             return Ok(Constant::None.into());
         }
-
         assert!(block.statements.start < block.statements.end);
 
         let last_id = block.statements.end.0.checked_sub(1).expect("assert above");
-
-        let old_size = variable_values.values.len();
 
         for id in block.statements.start.0..last_id {
             let expr_id = ExprId(id);
@@ -1141,9 +1143,23 @@ impl Ast {
             };
         }
 
-        let res = self.evaluate_expr(ExprId(last_id), variable_values)?;
+        self.evaluate_expr(ExprId(last_id), variable_values)
+    }
+
+    fn evaluate_block(
+        &self,
+        block: &Block,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        let old_size = variable_values.values.len();
+        let old_reference = variable_values.reference;
+
+        let res = self.evaluate_block_unscoped(block, variable_values)?;
+
         assert!(old_size <= variable_values.values.len());
+        assert_eq!(variable_values.reference, old_reference);
         variable_values.values.truncate(old_size);
+
         Ok(res)
     }
 
@@ -1182,12 +1198,7 @@ impl Ast {
 
                 let block_to_use = if b { if_block } else { else_block };
 
-                let block_result = self.evaluate_block(block_to_use, variable_values)?;
-                let Some(_) = block_result.some_or_please_return() else {
-                    return Ok(block_result);
-                };
-
-                Ok(Constant::None.into())
+                self.evaluate_block(block_to_use, variable_values)
             }
             Expr::Call(call) => {
                 let mut parameters = Vec::new();
@@ -1262,11 +1273,19 @@ impl Ast {
         variable_values: &mut VariableValues,
     ) -> Result<Constant, RuntimeError> {
         let fun = self
-            .funs
-            .get(fun_id.0)
-            .unwrap() //TODO
-            // .ok_or_else(|| RuntimeError::UnknownFunction(name.clone()))?
-            ;
+        .funs
+        .get(fun_id.0)
+        .unwrap() //TODO
+        // .ok_or_else(|| RuntimeError::UnknownFunction(name.clone()))?
+        ;
+
+        debug!(
+            "calling {} ({} parameters) with stack size {} and old reference {}",
+            fun.name,
+            fun.variables.len(),
+            variable_values.values.len(),
+            variable_values.reference
+        );
 
         if fun.variables.len() != parameters.len() {
             return Err(RuntimeError::IncompatibleParameters(
@@ -1420,6 +1439,17 @@ impl Ast {
                     return Ok(Constant::Int(IntConstant::Small(i.abs())));
                 }
             }
+            InternalFun::Lines => {
+                if let Some(Constant::List(list)) = parameters.iter().collect_single() {
+                    let string = try_list_to_string(&list.borrow())?;
+                    let result: Vec<Constant> = string
+                        .lines()
+                        .map(|sub| str_to_list(sub).into())
+                        .collect_vec();
+
+                    return Ok(result.into());
+                }
+            }
         }
 
         Err(RuntimeError::IncompatibleParametersForInternal(
@@ -1492,6 +1522,7 @@ fn str_to_list(s: &str) -> Vec<Constant> {
     s.chars().map(Constant::Char).collect()
 }
 
+#[derive(Debug)]
 pub struct Fun {
     name: Word,
     variables: Variables,
@@ -1804,6 +1835,12 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
         Some(Token::Call)
     } else if keyword == "val" {
         Some(Token::Val)
+    } else if keyword == "bool" {
+        Some(Token::Ty(Ty::Bool))
+    } else if keyword == "true" {
+        Some(Token::Literal(Constant::Bool(true)))
+    } else if keyword == "false" {
+        Some(Token::Literal(Constant::Bool(false)))
     } else {
         None
     }
