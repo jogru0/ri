@@ -10,8 +10,8 @@ fun parse_numbers(s: List) -> List {
 }
 
 fun is_valid_report(report: List) -> bool {
-    val len = report.len();
-    if len < 2 {
+    val length = report.len();
+    if length < 2 {
         return true;
     }
 
@@ -20,10 +20,10 @@ fun is_valid_report(report: List) -> bool {
     val found_dec = false;
 
     val i = 1;
-    while i < len {
-        val new = report.get(i);
+    while i < length {
+        val n = report.get(i);
 
-        val diff = new - last;
+        val diff = n - last;
         val adiff = diff.abs();
 
         if adiff < 1 { 
@@ -40,7 +40,7 @@ fun is_valid_report(report: List) -> bool {
             found_inc = true;
         }
         
-        last = new;
+        last = n;
         
         i = i+1;
     }
@@ -60,16 +60,16 @@ fun main() -> int {
     val report_strings: List = input_string.lines();
 
     val i = 0;
-    val len = report_strings.len();
+    val length = report_strings.len();
     val reports = List.new();
-    while i < len {
+    while i < length {
         reports.push(report_strings.get(i).parse_numbers());
         i = i + 1;
     }
 
     i = 0;
     val sum = 0;
-    while i < len {
+    while i < length {
         if is_valid_report(reports.get(i)) {
             sum = sum + 1;
         }

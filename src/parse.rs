@@ -69,6 +69,7 @@ pub enum Constant {
     List(Rc<RefCell<Vec<Constant>>>),
     Ty(Ty),
     Char(char),
+    Callable(Callable),
 }
 
 impl From<Vec<Constant>> for Constant {
@@ -97,6 +98,7 @@ impl Constant {
             Constant::List(_) => Ty::List,
             Constant::Ty(_) => Ty::Ty,
             Constant::Char(_) => Ty::Char,
+            Constant::Callable(_) => Ty::Callable,
         }
     }
 }
@@ -119,6 +121,7 @@ impl Display for Constant {
             Constant::List(vec) => write!(f, "{vec:?}"),
             Constant::Ty(ty) => write!(f, "{ty}"),
             Constant::Char(c) => write!(f, "{c}"),
+            Constant::Callable(callable) => write!(f, "{callable}"),
         }
     }
 }
@@ -200,9 +203,15 @@ pub struct ExprId(usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ListId(usize);
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 //TODO pub field
 pub struct FunId(pub usize);
+
+impl Display for FunId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct ExprRange {
@@ -221,15 +230,25 @@ pub struct Call {
     arguments: ExprRange,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Callable {
     Fun(FunId),
     InternalFun(InternalFun),
 }
 
-#[derive(Clone, Copy, Debug)]
+impl Display for Callable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Callable::Fun(fun_id) => writeln!(f, "{fun_id}"),
+            Callable::InternalFun(internal_fun) => writeln!(f, "{internal_fun}"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InternalFun {
     New,
+    Invoke,
     Debug,
     Push,
     Get,
@@ -258,6 +277,7 @@ impl Display for InternalFun {
             InternalFun::Abs => write!(f, "abs"),
             InternalFun::Lines => write!(f, "lines"),
             InternalFun::Debug => write!(f, "debug"),
+            InternalFun::Invoke => write!(f, "invoke"),
         }
     }
 }
@@ -276,6 +296,7 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
         "abs".try_into().expect("const") => InternalFun::Abs,
         "lines".try_into().expect("const") => InternalFun::Lines,
         "debug".try_into().expect("const") => InternalFun::Debug,
+        "invoke".try_into().expect("const") => InternalFun::Invoke,
     }
 });
 
@@ -701,6 +722,10 @@ impl TokenStream<'_> {
         Ok((ast, follow_up))
     }
 
+    fn get_fun_id(&mut self, word: Word) -> FunId {
+        FunId(self.fun_names.insert_full(word).0)
+    }
+
     fn parse_non_binary(&mut self) -> Result<Expr, ParseError> {
         //TODO: Combine with match, peek vs next issue
         if let Some(Token::BraceLeft) = self.peek() {
@@ -729,8 +754,20 @@ impl TokenStream<'_> {
 
                     Expr::Assign(self.stack.get(&word)?, self.expressions.add(expr))
                 }
-                _ => Expr::Variable(self.stack.get(&word)?),
+                _ =>
+                //TODO: in doubt, should assume fun, not var.
+                //TODO Err flow
+                {
+                    if let Some(internal_fun) = InternalFun::get(&word) {
+                        Expr::Constant(Constant::Callable(Callable::InternalFun(internal_fun)))
+                    } else if let Ok(variable_id) = self.stack.get(&word) {
+                        Expr::Variable(variable_id)
+                    } else {
+                        Expr::Constant(Constant::Callable(Callable::Fun(self.get_fun_id(word))))
+                    }
+                }
             },
+
             Token::Literal(int_constant) => Expr::Constant(int_constant),
             _ => {
                 return Err(ParseError::UnexpectedToken(
@@ -1043,7 +1080,7 @@ impl TokenStream<'_> {
         let callable = if let Some(internal_fun) = InternalFun::get(&name) {
             Callable::InternalFun(internal_fun)
         } else {
-            Callable::Fun(FunId(self.fun_names.insert_full(name).0))
+            Callable::Fun(self.get_fun_id(name))
         };
 
         Ok(Expr::Call(Call {
@@ -1247,14 +1284,8 @@ impl Ast {
                     parameters.push(parameter.clone());
                 }
 
-                let result = match call.callable {
-                    Callable::Fun(fun_id) => self.evaluate_fun(fun_id, parameters, variable_values),
-                    Callable::InternalFun(internal_fun) => {
-                        self.evaluate_internal_fun(internal_fun, parameters)
-                    }
-                }?;
-
-                Ok(result.into())
+                self.evaluate_call(call.callable, parameters, variable_values)
+                    .map(|c| c.into())
             }
             Expr::Assign(variable_id, expr_id) => {
                 let eval = self.evaluate_expr(*expr_id, variable_values)?;
@@ -1339,6 +1370,22 @@ impl Ast {
         }
     }
 
+    fn evaluate_call(
+        &self,
+        callable: Callable,
+        parameters: Vec<Constant>,
+        variable_values: &mut VariableValues,
+    ) -> Result<Constant, RuntimeError> {
+        let result = match callable {
+            Callable::Fun(fun_id) => self.evaluate_fun(fun_id, parameters, variable_values),
+            Callable::InternalFun(internal_fun) => {
+                self.evaluate_internal_fun(internal_fun, parameters, variable_values)
+            }
+        }?;
+
+        Ok(result)
+    }
+
     pub fn evaluate_fun(
         &self,
         fun_id: FunId,
@@ -1403,6 +1450,7 @@ impl Ast {
         &self,
         internal_fun: InternalFun,
         parameters: Vec<Constant>,
+        variable_values: &mut VariableValues,
     ) -> Result<Constant, RuntimeError> {
         match internal_fun {
             InternalFun::New => {
@@ -1540,6 +1588,17 @@ impl Ast {
                 if let Some(c) = parameters.iter().collect_single() {
                     info!("[Debug] {c}");
                     return Ok(c.clone());
+                }
+            }
+            InternalFun::Invoke => {
+                let mut params_iter = parameters.iter();
+                if let Some(&Constant::Callable(callable)) = params_iter.next() {
+                    //TODO Collect meh
+                    return self.evaluate_call(
+                        callable,
+                        params_iter.cloned().collect(),
+                        variable_values,
+                    );
                 }
             }
         }
@@ -1933,6 +1992,8 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
         Some(Token::Val)
     } else if keyword == "bool" {
         Some(Token::Ty(Ty::Bool))
+    } else if keyword == "Callable" {
+        Some(Token::Ty(Ty::Callable))
     } else if keyword == "true" {
         Some(Token::Literal(Constant::Bool(true)))
     } else if keyword == "false" {
@@ -1996,6 +2057,7 @@ pub enum Ty {
     List,
     Range,
     Ty,
+    Callable,
     Char,
 }
 
@@ -2009,6 +2071,7 @@ impl Display for Ty {
             Ty::None => write!(f, "None"),
             Ty::Ty => write!(f, "TYPE"),
             Ty::Char => write!(f, "char"),
+            Ty::Callable => write!(f, "Callable"),
         }
     }
 }

@@ -4,8 +4,8 @@ fun parse_numbers(s: List) -> List {
 
     val numbers: List = List.new();
     val i: int = 0;
-    val len: int = number_strings.len();
-    while i < len {
+    val length: int = number_strings.len();
+    while i < length {
         numbers.push(number_strings.get(i).parse(int));
         i = i + 1;
     }
@@ -13,8 +13,8 @@ fun parse_numbers(s: List) -> List {
 }
 
 fun is_valid_report(report: List) -> bool {
-    val len = report.len();
-    if len < 2 {
+    val length = report.len();
+    if length < 2 {
         return true;
     }
 
@@ -23,10 +23,10 @@ fun is_valid_report(report: List) -> bool {
     val found_dec = false;
 
     val i = 1;
-    while i < len {
-        val new: int = report.get(i);
+    while i < length {
+        val n: int = report.get(i);
 
-        val diff = new - last;
+        val diff = n - last;
         val adiff = diff.abs();
 
         if adiff < 1 { 
@@ -43,7 +43,7 @@ fun is_valid_report(report: List) -> bool {
             found_inc = true;
         }
         
-        last = new;
+        last = n;
         
         i = i+1;
     }
@@ -59,8 +59,8 @@ fun is_valid_report(report: List) -> bool {
 
 
 fun is_valid_report_without(report: List, ex: int) -> bool {
-    val len = report.len();
-    if len < 3 {
+    val length = report.len();
+    if length < 3 {
         return true;
     }
 
@@ -77,18 +77,18 @@ fun is_valid_report_without(report: List, ex: int) -> bool {
 
     i = i + 1;
 
-    if ex + 1 == len {
-        len = ex;
+    if ex + 1 == length {
+        length = ex;
     }
 
-    while i < len {
+    while i < length {
         if i == ex {
             i = i + 1;
         }
 
-        val new: int = report.get(i);
+        val n: int = report.get(i);
 
-        val diff = new - last;
+        val diff = n - last;
         val adiff = diff.abs();
 
         if adiff < 1 { 
@@ -105,7 +105,7 @@ fun is_valid_report_without(report: List, ex: int) -> bool {
             found_inc = true;
         }
         
-        last = new;
+        last = n;
         
         i = i+1;
     }
@@ -126,16 +126,16 @@ fun main() -> int {
     val report_strings: List = input_string.lines();
 
     val i = 0;
-    val len = report_strings.len();
+    val length = report_strings.len();
     val reports = List.new();
-    while i < len {
+    while i < length {
         reports.push(parse_numbers(report_strings.get(i)));
         i = i + 1;
     }
 
     i = 0;
     val sum = 0;
-    while i < len {
+    while i < length {
         if is_valid_report_generalized(reports.get(i)) {
             sum = sum + 1;
         }
@@ -154,9 +154,9 @@ fun is_valid_report_generalized(report: List) -> bool {
     }
 
     val i = 0;
-    val len = report.len();
+    val length = report.len();
 
-    while i < len {
+    while i < length {
         if is_valid_report_without(report, i) {
         return true;
     }   

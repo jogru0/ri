@@ -28,8 +28,8 @@ fun main() -> int {
     val sum = 0;
 
     val i = 0;
-    val len = right.len();
-    while i < len {
+    val length = right.len();
+    while i < length {
         sum = sum + abs(right.get(i) - left.get(i));
 
         i = i+1;

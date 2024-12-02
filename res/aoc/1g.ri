@@ -1,25 +1,28 @@
+fun map(list: List, callable: Callable) -> List {
+    val result = List.new();
+    for entry in list {
+        result.push(callable.invoke(entry))
+    }
+    result
+}
 
+fun parse_int(s: List) -> int {
+    s.parse(int)
+}
 
 fun main() -> int {
     val input_string: List = List.from_file("res/aoc/1.txt");
 
     val number_strings: List = input_string.split_whitespace();
 
-    val numbers: List = List.new();
-
-    val i: int = 0;
-    val len: int = number_strings.len();
-    while i < len {
-        numbers.push(number_strings.get(i).parse(int));
-        i = i + 1;
-    }
+    val numbers = number_strings.map(parse_int);
 
     val left = List.new();
     val right = List.new();
 
-    i  = 0;
-    len = numbers.len();
-    while i < len {
+    val i  = 0;
+    val length = numbers.len();
+    while i < length {
         if i % 2 == 0 {
             left.push(number_strings.get(i).parse(int));
         } else {
@@ -32,14 +35,14 @@ fun main() -> int {
     val sum = 0;
 
     i = 0;
-    len = right.len();
-    while i < len {
+    length = right.len();
+    while i < length {
         val value = left.get(i);
 
         val appaerances = 0;
 
         val j = 0;
-        while j < len {
+        while j < length {
             if right.get(j) == value {
                 appaerances = appaerances + 1;
             }
