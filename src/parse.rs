@@ -10,7 +10,7 @@ use std::{
     sync::LazyLock,
 };
 
-use indexmap::{indexmap, map::Entry, IndexMap, IndexSet};
+use indexmap::{indexmap, IndexMap, IndexSet};
 use itertools::Itertools;
 use log::{debug, info};
 use thiserror::Error;
@@ -574,6 +574,63 @@ impl Tokens {
 
         Ok(Self(vec))
     }
+
+    pub fn get_top_level_declarations(&self) -> Result<IndexSet<Word>, ParseError> {
+        let mut stream = TokenStreamBasic::new(self);
+
+        let mut fun_names = IndexSet::new();
+
+        loop {
+            match stream.peek() {
+                None => break,
+                Some(Token::Fun) => {
+                    stream.next().expect("just peeked");
+                    let name = stream.expect_word()?;
+                    let inserted = fun_names.insert(name.clone());
+                    if !inserted {
+                        return Err(ParseError::AlreadyDefinedFunction(name));
+                    }
+                }
+                Some(_) => {
+                    stream.next().expect("just peeked");
+                }
+            }
+        }
+
+        Ok(fun_names)
+    }
+}
+
+pub struct TokenStreamBasic<'a> {
+    tokens: &'a Tokens,
+    index: usize,
+}
+
+impl<'a> TokenStreamBasic<'a> {
+    pub fn new(tokens: &'a Tokens) -> Self {
+        Self { tokens, index: 0 }
+    }
+
+    pub fn is_fully_parsed(&self) -> bool {
+        self.index == self.tokens.get().len()
+    }
+
+    fn peek(&mut self) -> Option<Token> {
+        self.tokens.get().get(self.index).cloned()
+    }
+
+    fn next(&mut self) -> Result<Token, ParseError> {
+        let token = self.peek().ok_or(ParseError::UnexpectedEndOfStream)?;
+        self.index += 1;
+        Ok(token)
+    }
+
+    fn expect_word(&mut self) -> Result<Word, ParseError> {
+        match self.next()? {
+            Token::Word(word) => Ok(word),
+            token => Err(ParseError::UnexpectedToken(token, "expected a word".into())),
+        }
+    }
 }
 
 pub struct TokenStream<'a> {
@@ -583,18 +640,18 @@ pub struct TokenStream<'a> {
     int_variables: IndexSet<Word>,
     //TODO pub
     pub expressions: Expressions,
-    fun_names: IndexSet<Word>,
+    fun_names: &'a IndexSet<Word>,
     stack: Stack,
 }
 
 impl<'a> TokenStream<'a> {
-    pub fn new(tokens: &'a Tokens) -> Self {
+    pub fn new(tokens: &'a Tokens, fun_names: &'a IndexSet<Word>) -> Self {
         Self {
             tokens,
             index: 0,
             int_variables: IndexSet::new(),
             expressions: Expressions::new(),
-            fun_names: IndexSet::new(),
+            fun_names,
             stack: Stack::new(),
         }
     }
@@ -743,8 +800,12 @@ impl TokenStream<'_> {
         Ok((ast, follow_up))
     }
 
-    fn get_fun_id(&mut self, word: Word) -> FunId {
-        FunId(self.fun_names.insert_full(word).0)
+    fn get_fun_id(&mut self, word: &Word) -> Result<FunId, ParseError> {
+        Ok(FunId(
+            self.fun_names
+                .get_index_of(word)
+                .ok_or(ParseError::NotDefinedFunction(word.clone()))?,
+        ))
     }
 
     fn parse_non_binary(&mut self) -> Result<Expr, ParseError> {
@@ -788,7 +849,7 @@ impl TokenStream<'_> {
                     } else if let Ok(variable_id) = self.stack.get(&word) {
                         Expr::Variable(variable_id)
                     } else {
-                        Expr::Constant(Constant::Callable(Callable::Fun(self.get_fun_id(word))))
+                        Expr::Constant(Constant::Callable(Callable::Fun(self.get_fun_id(&word)?)))
                     }
                 }
             },
@@ -1125,7 +1186,7 @@ impl TokenStream<'_> {
         let callable = if let Some(internal_fun) = InternalFun::get(&name) {
             Callable::InternalFun(internal_fun)
         } else {
-            Callable::Fun(self.get_fun_id(name))
+            Callable::Fun(self.get_fun_id(&name)?)
         };
 
         Ok(Expr::Call(Call {
@@ -1137,24 +1198,19 @@ impl TokenStream<'_> {
 
 impl Tokens {
     pub fn parse(&self) -> Result<Ast, ParseError> {
-        let mut fun_set = IndexMap::new();
+        let fun_names = self.get_top_level_declarations()?;
 
-        let mut ts = TokenStream::new(self);
+        let mut funs = Vec::new();
+
+        let mut ts = TokenStream::new(self, &fun_names);
 
         loop {
             match ts.peek() {
                 None => break,
                 Some(Token::Fun) => {
                     let fun: Fun = ts.parse_fun()?;
-                    match fun_set.entry(fun.name.clone()) {
-                        Entry::Occupied(_) => {
-                            return Err(ParseError::AlreadyDefinedFunction(fun.name))
-                        }
-                        Entry::Vacant(vacant_entry) => {
-                            ts.fun_names.insert(fun.name.clone());
-                            vacant_entry.insert(fun);
-                        }
-                    }
+                    assert_eq!(Some(&fun.name), fun_names.get_index(funs.len()));
+                    funs.push(fun);
                 }
                 Some(unexpected) => {
                     return Err(ParseError::UnexpectedToken(
@@ -1173,16 +1229,6 @@ impl Tokens {
 
         let entry_point = ts.fun_names.get_index_of(&*MAIN).map(FunId);
         //TODO: Verify that there are no arguments for main?
-
-        let mut funs = Vec::new();
-
-        for name in ts.fun_names {
-            funs.push(
-                fun_set
-                    .swap_remove(&name)
-                    .ok_or(ParseError::NotDefinedFunction(name))?,
-            );
-        }
 
         Ok(Ast::new(funs, ts.expressions, entry_point))
     }
