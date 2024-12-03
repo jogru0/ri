@@ -546,7 +546,7 @@ pub enum ParseError {
     NotDefinedVariable(Word),
     #[error("variable '{0}' already defined")]
     AlreadyDefinedVariable(Word),
-    #[error("unexpected token '{0}' ({1})")]
+    #[error("unexpected token '{0:?}' ({1})")]
     UnexpectedToken(Token, String),
     #[error("function '{0}' already defined")]
     AlreadyDefinedFunction(Word),
@@ -832,27 +832,36 @@ impl TokenStream<'_> {
 
                 Expr::Return(self.expressions.add(expr))
             }
-            Token::Word(word) => match self.peek() {
-                Some(Token::ParanLeft) => self.parse_fun_arguments(word, None)?,
-                Some(Token::Assign) => {
-                    self.expect(Token::Assign).expect("just peeked");
-                    let expr = self.parse_expr()?;
+            Token::Word(word) => {
+                // //TODO Err flow
+                // let variable_id = self.stack.get(&word).ok();
+                // let fun_id = self.fun_names.get_index_of(&word);
+                // let module_id = self.mod_names.get_index_of(&word);
 
-                    Expr::Assign(self.stack.get(&word)?, self.expressions.add(expr))
-                }
-                _ =>
-                //TODO: in doubt, should assume fun, not var.
-                //TODO Err flow
-                {
-                    if let Some(internal_fun) = InternalFun::get(&word) {
-                        Expr::Constant(Constant::Callable(Callable::InternalFun(internal_fun)))
-                    } else if let Ok(variable_id) = self.stack.get(&word) {
-                        Expr::Variable(variable_id)
-                    } else {
-                        Expr::Constant(Constant::Callable(Callable::Fun(self.get_fun_id(&word)?)))
+                match self.peek() {
+                    Some(Token::ParanLeft) => self.parse_fun_arguments(word, None)?,
+                    Some(Token::Assign) => {
+                        self.expect(Token::Assign).expect("just peeked");
+                        let expr = self.parse_expr()?;
+
+                        Expr::Assign(self.stack.get(&word)?, self.expressions.add(expr))
+                    }
+                    _ =>
+                    //TODO: in doubt, should assume fun, not var.
+                    //TODO Err flow
+                    {
+                        if let Some(internal_fun) = InternalFun::get(&word) {
+                            Expr::Constant(Constant::Callable(Callable::InternalFun(internal_fun)))
+                        } else if let Ok(variable_id) = self.stack.get(&word) {
+                            Expr::Variable(variable_id)
+                        } else {
+                            Expr::Constant(Constant::Callable(Callable::Fun(
+                                self.get_fun_id(&word)?,
+                            )))
+                        }
                     }
                 }
-            },
+            }
 
             Token::Literal(int_constant) => Expr::Constant(int_constant),
             _ => {
@@ -1212,12 +1221,18 @@ impl Tokens {
                     assert_eq!(Some(&fun.name), fun_names.get_index(funs.len()));
                     funs.push(fun);
                 }
+                Some(Token::Import) => {
+                    ts.next().expect("just peeked");
+                    ts.expect_word()?;
+                    ts.expect(Token::Semicolon)?;
+                }
                 Some(unexpected) => {
                     return Err(ParseError::UnexpectedToken(
                         unexpected,
                         format!(
-                            "expected a top level declaration (currently only '{}')",
-                            Token::Fun
+                            "expected a top level declaration (currently {} or {}))",
+                            Token::Fun,
+                            Token::Import
                         ),
                     ))
                 }
@@ -1940,6 +1955,11 @@ impl Parsee {
                 return Ok(Some(Token::BinaryOperator(BinaryOperator::Unequals)));
             }
 
+            if matches!(token, Token::Colon) && Some(':') == self.peek() {
+                self.next();
+                return Ok(Some(Token::DoubleColon));
+            }
+
             return Ok(Some(token.clone()));
         }
 
@@ -2104,6 +2124,8 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
         Some(Token::Ty(Ty::Int))
     } else if keyword == "None" {
         Some(Token::Ty(Ty::None))
+    } else if keyword == "import" {
+        Some(Token::Import)
     } else if keyword == "if" {
         Some(Token::If)
     } else if keyword == "else" {
@@ -2210,6 +2232,8 @@ impl Display for Ty {
 pub enum Token {
     Return,
     Else,
+    Import,
+    DoubleColon,
     Ty(Ty),
     Word(Word),
     Literal(Constant),
@@ -2265,6 +2289,8 @@ impl Display for Token {
             Token::BitAnd => write!(f, "&"),
             Token::BitOr => write!(f, "|"),
             Token::Negate => write!(f, "!"),
+            Token::Import => write!(f, "import"),
+            Token::DoubleColon => write!(f, "::"),
         }
     }
 }

@@ -1,3 +1,6 @@
+
+// import utils;
+
 fun map(list: List, callable: Callable) -> List {
     val result = List.new();
     for entry in list {
