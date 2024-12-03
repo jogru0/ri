@@ -25,8 +25,8 @@ pub enum RuntimeError {
     //TODO: Obviously not so nice without the name. But it should never happen, right?
     #[error("unknown variable '{0:?}'")]
     UnknownVariable(VariableId),
-    #[error("arguments '{0:?}' incompatible with parameters '{1:?}'")]
-    IncompatibleParameters(Vec<Ty>, Variables),
+    #[error("for function '{2}': arguments '{0:?}' incompatible with parameters '{1:?}'")]
+    IncompatibleParameters(Vec<Ty>, Variables, Word),
     #[error("arguments '{0:?}' incompatible with internal function {1}")]
     IncompatibleParametersForInternal(Vec<Ty>, InternalFun),
     #[error("missing '{}'", Token::Return)]
@@ -38,7 +38,7 @@ pub enum RuntimeError {
     TypeError(Ty, Ty),
     #[error("invalid operation:'{0} {1} {2}'")]
     InvalidBinaryOperation(Constant, BinaryOperator, Constant),
-    #[error("function'{0}' has return type '{1}', but evaluated to '{2}'")]
+    #[error("function '{0}' has return type '{1}', but evaluated to '{2}'")]
     WrongReturnType(Word, Ty, Ty),
     #[error("missing entry point (function '{}')", *MAIN)]
     NoEntryPoint,
@@ -186,12 +186,13 @@ pub enum Expr {
     BinaryOp(ExprId, BinaryOperator, ExprId),
     Block(Block),
     //TODO: Test for block here
-    If(ExprId, Block, Block),
+    If(ExprId, Block, ExprId),
     While(ExprId, Block),
     Call(Call),
     Assign(VariableId, ExprId),
     Introduce(VariableId, ExprId),
     For(VariableId, Option<VariableId>, ExprId, Block),
+    Negate(ExprId),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -531,6 +532,9 @@ fn combine_with_operator(
         BinaryOperator::Modulo => lhs % rhs,
         //TODO error on ty mismatch
         BinaryOperator::Equals => Ok(Constant::Bool(lhs == rhs)),
+        BinaryOperator::And => Ok(Constant::Bool(lhs.get_bool()? && rhs.get_bool()?)),
+        BinaryOperator::Or => Ok(Constant::Bool(lhs.get_bool()? || rhs.get_bool()?)),
+        BinaryOperator::Unequals => Ok(Constant::Bool(lhs != rhs)),
     }
 }
 
@@ -604,6 +608,9 @@ pub enum BinaryOperator {
     Smaller,
     Modulo,
     Equals,
+    And,
+    Or,
+    Unequals,
 }
 
 impl Display for BinaryOperator {
@@ -615,12 +622,17 @@ impl Display for BinaryOperator {
             BinaryOperator::Smaller => write!(f, "<"),
             BinaryOperator::Modulo => write!(f, "%"),
             BinaryOperator::Equals => write!(f, "=="),
+            BinaryOperator::And => write!(f, "&&"),
+            BinaryOperator::Or => write!(f, "||"),
+            BinaryOperator::Unequals => write!(f, "!="),
         }
     }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 enum Stickyness {
+    Disjunction,
+    Conjunction,
     Comparison,
     Addition,
     Multiplication,
@@ -635,6 +647,9 @@ impl BinaryOperator {
             BinaryOperator::Smaller => Stickyness::Comparison,
             BinaryOperator::Modulo => Stickyness::Multiplication,
             BinaryOperator::Equals => Stickyness::Comparison,
+            BinaryOperator::And => Stickyness::Conjunction,
+            BinaryOperator::Or => Stickyness::Disjunction,
+            BinaryOperator::Unequals => Stickyness::Comparison,
         }
     }
 }
@@ -684,6 +699,12 @@ impl Stack {
     fn cut_back_to(&mut self, old_stack_size: usize) {
         assert!(old_stack_size <= self.variables.len());
         self.variables.truncate(old_stack_size);
+    }
+}
+
+impl From<Block> for Expr {
+    fn from(block: Block) -> Self {
+        Self::Block(block)
     }
 }
 
@@ -739,6 +760,10 @@ impl TokenStream<'_> {
                 let inner_expr = self.parse_expr()?;
                 self.expect(Token::ParanRight)?;
                 inner_expr
+            }
+            Token::Negate => {
+                let inner_expr = self.parse_non_binary()?;
+                Expr::Negate(self.expressions.add(inner_expr))
             }
             Token::Ty(ty) => Expr::Constant(Constant::Ty(ty)),
             Token::Return => {
@@ -815,8 +840,23 @@ impl TokenStream<'_> {
 
         let if_block = self.parse_block()?;
 
-        let else_block = if self.entertain(Token::Else) {
-            self.parse_block()?
+        let else_expr = if self.entertain(Token::Else) {
+            match self.peek() {
+                Some(Token::BraceLeft) => self.parse_block()?.into(),
+                Some(Token::If) => self.parse_if()?,
+                Some(unexpected) => {
+                    return Err(ParseError::UnexpectedToken(
+                        unexpected,
+                        format!(
+                            "expect '{}' or '{}' after '{}'",
+                            Token::BraceLeft,
+                            Token::If,
+                            Token::Else,
+                        ),
+                    ))
+                }
+                None => return Err(ParseError::UnexpectedEndOfStream),
+            }
         } else {
             Block {
                 statements: ExprRange {
@@ -824,9 +864,14 @@ impl TokenStream<'_> {
                     end: ExprId(0),
                 },
             }
+            .into()
         };
 
-        let expr = Expr::If(self.expressions.add(cond), if_block, else_block);
+        let expr = Expr::If(
+            self.expressions.add(cond),
+            if_block,
+            self.expressions.add(else_expr),
+        );
         Ok(expr)
     }
 
@@ -1250,6 +1295,15 @@ impl Ast {
                     return Ok(lhs);
                 };
 
+                // Short circuiting
+                if op == &BinaryOperator::And && !lhs.get_bool()? {
+                    return Ok(Constant::Bool(false).into());
+                }
+
+                if op == &BinaryOperator::Or && lhs.get_bool()? {
+                    return Ok(Constant::Bool(true).into());
+                }
+
                 let rhs = self.evaluate_expr(*rhs_expr, variable_values)?;
                 let Some(rhs) = rhs.some_or_please_return() else {
                     return Ok(rhs);
@@ -1261,7 +1315,7 @@ impl Ast {
             Expr::Return(expr) => self
                 .evaluate_expr(*expr, variable_values)
                 .map(|evaluation| evaluation.returning()),
-            Expr::If(expr, if_block, else_block) => {
+            Expr::If(expr, if_block, else_expr) => {
                 let eval = self.evaluate_expr(*expr, variable_values)?;
                 let Some(constant) = eval.some_or_please_return() else {
                     return Ok(eval);
@@ -1269,9 +1323,11 @@ impl Ast {
 
                 let b = constant.get_bool()?;
 
-                let block_to_use = if b { if_block } else { else_block };
-
-                self.evaluate_block(block_to_use, variable_values)
+                if b {
+                    self.evaluate_block(if_block, variable_values)
+                } else {
+                    self.evaluate_expr(*else_expr, variable_values)
+                }
             }
             Expr::Call(call) => {
                 let mut parameters = Vec::new();
@@ -1367,6 +1423,13 @@ impl Ast {
 
                 Ok(Constant::None.into())
             }
+            Expr::Negate(expr_id) => {
+                let inner_value = self.evaluate_expr(*expr_id, variable_values)?;
+                let Some(inner_value) = inner_value.some_or_please_return() else {
+                    return Ok(inner_value);
+                };
+                Ok(Constant::Bool(!inner_value.get_bool()?).into())
+            }
         }
     }
 
@@ -1412,6 +1475,7 @@ impl Ast {
             return Err(RuntimeError::IncompatibleParameters(
                 parameters.iter().map(|c| c.ty()).collect(),
                 fun.variables.clone(),
+                fun.name.clone(),
             ));
         }
 
@@ -1710,6 +1774,8 @@ pub enum TokenizeError {
     InvalidWord(String),
     #[error("missing '\"' to end the string literal")]
     MissingEndOfStringLiteral,
+    #[error("char literal invalid")]
+    InvalidCharLiteral,
 }
 
 struct Parsee {
@@ -1813,6 +1879,21 @@ impl Parsee {
                 return Ok(Some(Token::BinaryOperator(BinaryOperator::Equals)));
             }
 
+            if matches!(token, Token::BitAnd) && Some('&') == self.peek() {
+                self.next();
+                return Ok(Some(Token::BinaryOperator(BinaryOperator::And)));
+            }
+
+            if matches!(token, Token::BitOr) && Some('|') == self.peek() {
+                self.next();
+                return Ok(Some(Token::BinaryOperator(BinaryOperator::Or)));
+            }
+
+            if matches!(token, Token::Negate) && Some('=') == self.peek() {
+                self.next();
+                return Ok(Some(Token::BinaryOperator(BinaryOperator::Unequals)));
+            }
+
             return Ok(Some(token.clone()));
         }
 
@@ -1820,6 +1901,7 @@ impl Parsee {
             '0'..='9' => self.parse_number(start)?,
             'A'..='z' => self.parse_word(start)?,
             '"' => self.parse_string_literal()?,
+            '\'' => self.parse_char()?,
             _ => return Err(self.error(TokenizeError::UnknownCharacter(start))),
         };
 
@@ -1867,6 +1949,18 @@ impl Parsee {
         self.skip_if_end_of_line();
     }
 
+    fn parse_char(&mut self) -> Result<Token, SourceTokenizeError> {
+        //TODO test error
+        let Some(c) = self.next() else {
+            return Err(self.error(TokenizeError::InvalidCharLiteral));
+        };
+        let Some('\'') = self.next() else {
+            return Err(self.error(TokenizeError::InvalidCharLiteral));
+        };
+
+        Ok(Token::Literal(Constant::Char(c)))
+    }
+
     fn parse_string_literal(&mut self) -> Result<Token, SourceTokenizeError> {
         let mut list = Vec::new();
 
@@ -1881,21 +1975,6 @@ impl Parsee {
 
             list.push(Constant::Char(c));
         }
-        // let mut word = String::new();
-        // word.push(start);
-
-        // while let Some(next) = self.peek() {
-        //     if !next.is_ascii_digit() {
-        //         break;
-        //     }
-
-        //     word.push(next);
-        //     self.next();
-        // }
-
-        // let i = word.parse().unwrap();
-
-        // Ok(Token::Literal(Constant::Int(IntConstant::Small(i))))
     }
 }
 
@@ -1959,6 +2038,9 @@ fn single_digit_to_token(c: char) -> Option<Token> {
         ':' => Some(Token::Colon),
         '=' => Some(Token::Assign),
         '.' => Some(Token::Dot),
+        '&' => Some(Token::BitAnd),
+        '|' => Some(Token::BitOr),
+        '!' => Some(Token::Negate),
         _ => None,
     }
 }
@@ -1992,6 +2074,8 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
         Some(Token::Val)
     } else if keyword == "bool" {
         Some(Token::Ty(Ty::Bool))
+    } else if keyword == "char" {
+        Some(Token::Ty(Ty::Char))
     } else if keyword == "Callable" {
         Some(Token::Ty(Ty::Callable))
     } else if keyword == "true" {
@@ -2086,10 +2170,13 @@ pub enum Token {
     BinaryOperator(BinaryOperator),
     Semicolon,
     Colon,
-    Arrow,
+    BitAnd,
+    BitOr,
+    Negate,
     While,
     Comma,
     Assign,
+    Arrow,
     ParanLeft,
     ParanRight,
     BraceLeft,
@@ -2129,6 +2216,9 @@ impl Display for Token {
             Token::While => write!(f, "while"),
             Token::For => write!(f, "for"),
             Token::In => write!(f, "in"),
+            Token::BitAnd => write!(f, "&"),
+            Token::BitOr => write!(f, "|"),
+            Token::Negate => write!(f, "!"),
         }
     }
 }

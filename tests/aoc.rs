@@ -29,3 +29,13 @@ fn aoc2s() {
 fn aoc2g() {
     run("res/aoc/2g.ri", 601);
 }
+
+#[test]
+fn aoc3s() {
+    run("res/aoc/3s.ri", 165225049);
+}
+
+#[test]
+fn aoc3g() {
+    run("res/aoc/3g.ri", 108830766);
+}
