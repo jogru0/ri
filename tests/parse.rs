@@ -1,7 +1,5 @@
 use indexmap::IndexSet;
-use ri::parse::{
-    evaluate_debug, Constant, FunId, IntConstant, TokenStream, Tokens, Ty, VariableValues,
-};
+use ri::parse::{evaluate_debug, FunId, TokenStream, Tokens, Ty, VariableValues};
 
 #[test]
 fn punkt_vor_strich() {
@@ -18,7 +16,7 @@ fn punkt_vor_strich() {
 
     let value = evaluate_debug(expr, Ty::Int, ts.expressions).unwrap();
 
-    assert_eq!(value, Constant::Int(IntConstant::Small(7)));
+    assert_eq!(value, 7.into());
 }
 
 #[test]
@@ -36,7 +34,7 @@ fn punkt_vor_strich_ändert_nix() {
 
     let value = evaluate_debug(expr, Ty::Int, ts.expressions).unwrap();
 
-    assert_eq!(value, Constant::Int(IntConstant::Small(5)));
+    assert_eq!(value, 5.into());
 }
 
 #[test]
@@ -54,7 +52,7 @@ fn punkt_strich_punkt() {
 
     let value = evaluate_debug(expr, Ty::Int, ts.expressions).unwrap();
 
-    assert_eq!(value, Constant::Int(IntConstant::Small(0)));
+    assert_eq!(value, 0.into());
 }
 
 #[test]
@@ -74,7 +72,7 @@ fn strich_punkt_strich() {
 
     let value = evaluate_debug(expr, Ty::Int, ts.expressions).unwrap();
 
-    assert_eq!(value, Constant::Int(IntConstant::Small(105)));
+    assert_eq!(value, 105.into());
 }
 
 #[test]
@@ -92,7 +90,7 @@ fn minus_minus() {
 
     let value = evaluate_debug(expr, Ty::Int, ts.expressions).unwrap();
 
-    assert_eq!(value, Constant::Int(IntConstant::Small(8)));
+    assert_eq!(value, 8.into());
 }
 
 #[test]
@@ -111,13 +109,10 @@ fn fun_sum() {
     let value = ast
         .evaluate_fun(
             FunId(0),
-            vec![
-                Constant::Int(IntConstant::Small(4)),
-                Constant::Int(IntConstant::Small(5)),
-            ],
+            vec![4.into(), 5.into()],
             &mut VariableValues::new(),
         )
         .unwrap();
 
-    assert_eq!(value, Constant::Int(IntConstant::Small(9)));
+    assert_eq!(value, 9.into());
 }

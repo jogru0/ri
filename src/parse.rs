@@ -1,3 +1,7 @@
+use indexmap::{indexmap, IndexMap, IndexSet};
+use itertools::Itertools;
+use log::{debug, info};
+use std::hash::Hash;
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -9,10 +13,6 @@ use std::{
     rc::Rc,
     sync::LazyLock,
 };
-
-use indexmap::{indexmap, IndexMap, IndexSet};
-use itertools::Itertools;
-use log::{debug, info};
 use thiserror::Error;
 use word::Word;
 
@@ -43,7 +43,7 @@ pub enum RuntimeError {
     #[error("missing entry point (function '{}')", *MAIN)]
     NoEntryPoint,
     #[error("index '{1}' out of bounds for list {0:?})")]
-    IndexOutOfBounds(Vec<Constant>, IntConstant),
+    IndexOutOfBounds(Vec<HashableConstant>, IntConstant),
     #[error("static function '{0}.{1}' not defined)")]
     StaticFunctionOnWrongType(Ty, InternalFun),
     #[error("operation '{0}' invalid on '{1:?}'")]
@@ -56,31 +56,114 @@ pub enum RuntimeError {
     NotIterable(Constant),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntConstant {
     Small(i128),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Constant {
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PrimitiveConstant {
     Int(IntConstant),
     Bool(bool),
     None,
-    List(Rc<RefCell<Vec<Constant>>>),
     Ty(Ty),
     Char(char),
     Callable(Callable),
 }
 
-impl From<Vec<Constant>> for Constant {
-    fn from(value: Vec<Constant>) -> Self {
-        Self::List(Rc::new(RefCell::new(value)))
+impl PrimitiveConstant {
+    fn ty(&self) -> Ty {
+        match self {
+            Self::Int(_) => Ty::Int,
+            Self::Bool(_) => Ty::Bool,
+            Self::None => Ty::None,
+            Self::Ty(_) => Ty::Ty,
+            Self::Char(_) => Ty::Char,
+            Self::Callable(_) => Ty::Callable,
+        }
     }
 }
 
+impl HashableConstant {
+    fn ty(&self) -> Ty {
+        match self {
+            HashableConstant::PrimitiveConstant(primitive_constant) => primitive_constant.ty(),
+            HashableConstant::List(_) => Ty::List,
+        }
+    }
+}
+
+impl PartialEq for HashableConstant {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (HashableConstant::PrimitiveConstant(s), HashableConstant::PrimitiveConstant(o)) => {
+                s == o
+            }
+            (HashableConstant::List(s), HashableConstant::List(o)) => *s.borrow() == *o.borrow(),
+            (s, o) => {
+                assert_ne!(s.ty(), o.ty(), "implementation missing for {}", s.ty());
+                false
+            }
+        }
+    }
+}
+
+impl Eq for HashableConstant {}
+
+impl Hash for HashableConstant {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            HashableConstant::PrimitiveConstant(primitive_constant) => {
+                state.write_u8(0);
+                primitive_constant.hash(state);
+            }
+            HashableConstant::List(rc) => {
+                state.write_u8(1);
+                (*rc.borrow()).hash(state);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum HashableConstant {
+    PrimitiveConstant(PrimitiveConstant),
+    List(Rc<RefCell<Vec<HashableConstant>>>),
+}
+
+#[derive(Clone, Debug)]
+pub enum Constant {
+    HashableConstant(HashableConstant),
+    Dict(Rc<RefCell<IndexMap<HashableConstant, Constant>>>),
+}
+
+impl Default for Constant {
+    fn default() -> Self {
+        Self::HashableConstant(HashableConstant::PrimitiveConstant(PrimitiveConstant::None))
+    }
+}
+
+impl PartialEq for Constant {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::HashableConstant(s), Self::HashableConstant(o)) => s == o,
+            (Self::Dict(s), Self::Dict(o)) => *s.borrow() == *o.borrow(),
+            (s, o) => {
+                assert_ne!(s.ty(), o.ty(), "implementation missing for {}", s.ty());
+                false
+            }
+        }
+    }
+}
+
+impl Eq for Constant {}
+
 impl Constant {
     fn get_bool(&self) -> Result<bool, RuntimeError> {
-        if let Constant::Bool(b) = self {
+        if let Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+            PrimitiveConstant::Bool(b),
+        )) = self
+        {
             Ok(*b)
         } else {
             let actual = self.ty();
@@ -92,13 +175,8 @@ impl Constant {
 
     fn ty(&self) -> Ty {
         match self {
-            Constant::Int(_) => Ty::Int,
-            Constant::Bool(_) => Ty::Bool,
-            Constant::None => Ty::None,
-            Constant::List(_) => Ty::List,
-            Constant::Ty(_) => Ty::Ty,
-            Constant::Char(_) => Ty::Char,
-            Constant::Callable(_) => Ty::Callable,
+            Constant::Dict(_) => Ty::Dict,
+            Constant::HashableConstant(hashable_constant) => hashable_constant.ty(),
         }
     }
 }
@@ -111,17 +189,36 @@ impl Display for IntConstant {
     }
 }
 
+impl Display for PrimitiveConstant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Int(int) => write!(f, "{int}"),
+            Self::Bool(b) => write!(f, "{b}"),
+            Self::None => write!(f, "()"),
+            //TODO make it good
+            Self::Ty(ty) => write!(f, "{ty}"),
+            Self::Char(c) => write!(f, "{c}"),
+            Self::Callable(callable) => write!(f, "{callable}"),
+        }
+    }
+}
+
+impl Display for HashableConstant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PrimitiveConstant(primitive_constant) => write!(f, "{primitive_constant}"),
+            //TODO make it good
+            Self::List(vec) => write!(f, "{vec:?}"),
+        }
+    }
+}
+
 impl Display for Constant {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Constant::Int(int) => write!(f, "{int}"),
-            Constant::Bool(b) => write!(f, "{b}"),
-            Constant::None => write!(f, "()"),
+            Self::HashableConstant(hashable_constant) => write!(f, "{hashable_constant}"),
             //TODO make it good
-            Constant::List(vec) => write!(f, "{vec:?}"),
-            Constant::Ty(ty) => write!(f, "{ty}"),
-            Constant::Char(c) => write!(f, "{c}"),
-            Constant::Callable(callable) => write!(f, "{callable}"),
+            Self::Dict(index_map) => write!(f, "{index_map:?}"),
         }
     }
 }
@@ -204,7 +301,7 @@ pub struct ExprId(usize);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ListId(usize);
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 //TODO pub field
 pub struct FunId(pub usize);
 
@@ -231,7 +328,7 @@ pub struct Call {
     arguments: ExprRange,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Callable {
     Fun(FunId),
     InternalFun(InternalFun),
@@ -246,7 +343,7 @@ impl Display for Callable {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub enum InternalFun {
     New,
     Invoke,
@@ -437,7 +534,16 @@ impl Add for Constant {
 
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Constant::Int(lhs), Constant::Int(rhs)) => Ok(Constant::Int((lhs + rhs)?)),
+            (
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(lhs),
+                )),
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(rhs),
+                )),
+            ) => Ok(Constant::HashableConstant(
+                HashableConstant::PrimitiveConstant(PrimitiveConstant::Int((lhs + rhs)?)),
+            )),
             (lhs, rhs) => Err(RuntimeError::InvalidBinaryOperation(
                 lhs,
                 BinaryOperator::Plus,
@@ -452,7 +558,16 @@ impl Mul for Constant {
 
     fn mul(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Constant::Int(lhs), Constant::Int(rhs)) => Ok(Constant::Int((lhs * rhs)?)),
+            (
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(lhs),
+                )),
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(rhs),
+                )),
+            ) => Ok(Constant::HashableConstant(
+                HashableConstant::PrimitiveConstant(PrimitiveConstant::Int((lhs * rhs)?)),
+            )),
             (lhs, rhs) => Err(RuntimeError::InvalidBinaryOperation(
                 lhs,
                 BinaryOperator::Times,
@@ -462,20 +577,21 @@ impl Mul for Constant {
     }
 }
 
-// impl Ord for IntConstant {
-//     fn cmp(&self, other: &Self) -> Ordering {
-//         match (self, other) {
-//             (IntConstant::Small(lhs), IntConstant::Small(rhs)) => lhs.cmp(rhs),
-//         }
-//     }
-// }
-
 impl Rem for Constant {
     type Output = Result<Constant, RuntimeError>;
 
     fn rem(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Constant::Int(lhs), Constant::Int(rhs)) => Ok(Constant::Int((lhs % rhs)?)),
+            (
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(lhs),
+                )),
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(rhs),
+                )),
+            ) => Ok(Constant::HashableConstant(
+                HashableConstant::PrimitiveConstant(PrimitiveConstant::Int((lhs % rhs)?)),
+            )),
             (lhs, rhs) => Err(RuntimeError::InvalidBinaryOperation(
                 lhs,
                 BinaryOperator::Modulo,
@@ -490,7 +606,16 @@ impl Sub for Constant {
 
     fn sub(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Constant::Int(lhs), Constant::Int(rhs)) => Ok(Constant::Int((lhs - rhs)?)),
+            (
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(lhs),
+                )),
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(rhs),
+                )),
+            ) => Ok(Constant::HashableConstant(
+                HashableConstant::PrimitiveConstant(PrimitiveConstant::Int((lhs - rhs)?)),
+            )),
             (lhs, rhs) => Err(RuntimeError::InvalidBinaryOperation(
                 lhs,
                 BinaryOperator::Minus,
@@ -503,7 +628,14 @@ impl Sub for Constant {
 impl PartialOrd for Constant {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         match (self, other) {
-            (Constant::Int(lhs), Constant::Int(rhs)) => Some(lhs.cmp(rhs)),
+            (
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(lhs),
+                )),
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(rhs),
+                )),
+            ) => Some(lhs.cmp(rhs)),
 
             (lhs, rhs) => {
                 if lhs == rhs {
@@ -528,13 +660,21 @@ fn combine_with_operator(
         BinaryOperator::Smaller => lhs
             .partial_cmp(&rhs)
             .ok_or(RuntimeError::InvalidBinaryOperation(lhs, op, rhs))
-            .map(|ord| Constant::Bool(ord == Ordering::Less)),
+            .map(|ord| (ord == Ordering::Less).into()),
         BinaryOperator::Modulo => lhs % rhs,
         //TODO error on ty mismatch
-        BinaryOperator::Equals => Ok(Constant::Bool(lhs == rhs)),
-        BinaryOperator::And => Ok(Constant::Bool(lhs.get_bool()? && rhs.get_bool()?)),
-        BinaryOperator::Or => Ok(Constant::Bool(lhs.get_bool()? || rhs.get_bool()?)),
-        BinaryOperator::Unequals => Ok(Constant::Bool(lhs != rhs)),
+        BinaryOperator::Equals => Ok((lhs == rhs).into()),
+        BinaryOperator::And => Ok((lhs.get_bool()? && rhs.get_bool()?).into()),
+        BinaryOperator::Or => Ok((lhs.get_bool()? || rhs.get_bool()?).into()),
+        BinaryOperator::Unequals => Ok((lhs != rhs).into()),
+    }
+}
+
+impl From<bool> for Constant {
+    fn from(value: bool) -> Self {
+        Self::HashableConstant(HashableConstant::PrimitiveConstant(
+            PrimitiveConstant::Bool(value),
+        ))
     }
 }
 
@@ -765,6 +905,14 @@ impl From<Block> for Expr {
     }
 }
 
+impl From<Callable> for Constant {
+    fn from(value: Callable) -> Self {
+        Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+            PrimitiveConstant::Callable(value),
+        ))
+    }
+}
+
 impl TokenStream<'_> {
     pub fn is_fully_parsed(&self) -> bool {
         self.index == self.tokens.get().len()
@@ -826,7 +974,7 @@ impl TokenStream<'_> {
                 let inner_expr = self.parse_non_binary()?;
                 Expr::Negate(self.expressions.add(inner_expr))
             }
-            Token::Ty(ty) => Expr::Constant(Constant::Ty(ty)),
+            Token::Ty(ty) => Expr::Constant(ty.into()),
             Token::Return => {
                 let expr = self.parse_expr()?;
 
@@ -851,13 +999,11 @@ impl TokenStream<'_> {
                     //TODO Err flow
                     {
                         if let Some(internal_fun) = InternalFun::get(&word) {
-                            Expr::Constant(Constant::Callable(Callable::InternalFun(internal_fun)))
+                            Expr::Constant(Callable::InternalFun(internal_fun).into())
                         } else if let Ok(variable_id) = self.stack.get(&word) {
                             Expr::Variable(variable_id)
                         } else {
-                            Expr::Constant(Constant::Callable(Callable::Fun(
-                                self.get_fun_id(&word)?,
-                            )))
+                            Expr::Constant(Callable::Fun(self.get_fun_id(&word)?).into())
                         }
                     }
                 }
@@ -1168,7 +1314,7 @@ impl TokenStream<'_> {
         self.stack.cut_back_to(old_stack_size);
 
         if has_trailing_separator {
-            let expr = Expr::Constant(Constant::None);
+            let expr = Expr::Constant(Constant::default());
             statements.push(expr);
         }
 
@@ -1280,6 +1426,39 @@ impl Expressions {
     }
 }
 
+impl From<Ty> for Constant {
+    fn from(value: Ty) -> Self {
+        Constant::HashableConstant(HashableConstant::PrimitiveConstant(PrimitiveConstant::Ty(
+            value,
+        )))
+    }
+}
+
+impl From<i128> for Constant {
+    fn from(value: i128) -> Self {
+        Constant::HashableConstant(HashableConstant::PrimitiveConstant(PrimitiveConstant::Int(
+            IntConstant::Small(value),
+        )))
+    }
+}
+
+impl From<char> for HashableConstant {
+    fn from(value: char) -> Self {
+        HashableConstant::PrimitiveConstant(PrimitiveConstant::Char(value))
+    }
+}
+
+impl From<HashableConstant> for Constant {
+    fn from(value: HashableConstant) -> Self {
+        Constant::HashableConstant(value)
+    }
+}
+impl From<Vec<HashableConstant>> for HashableConstant {
+    fn from(value: Vec<HashableConstant>) -> Self {
+        HashableConstant::List(Rc::new(RefCell::new(value)))
+    }
+}
+
 pub struct Ast {
     funs: Vec<Fun>,
     expressions: Expressions,
@@ -1308,7 +1487,7 @@ impl Ast {
         variable_values: &mut VariableValues,
     ) -> Result<Evaluation, RuntimeError> {
         if block.statements.start == block.statements.end {
-            return Ok(Constant::None.into());
+            return Ok(Constant::default().into());
         }
         assert!(block.statements.start < block.statements.end);
 
@@ -1358,11 +1537,13 @@ impl Ast {
 
                 // Short circuiting
                 if op == &BinaryOperator::And && !lhs.get_bool()? {
-                    return Ok(Constant::Bool(false).into());
+                    let res: Constant = false.into();
+                    return Ok(res.into());
                 }
 
                 if op == &BinaryOperator::Or && lhs.get_bool()? {
-                    return Ok(Constant::Bool(true).into());
+                    let res: Constant = true.into();
+                    return Ok(res.into());
                 }
 
                 let rhs = self.evaluate_expr(*rhs_expr, variable_values)?;
@@ -1410,7 +1591,7 @@ impl Ast {
                     return Ok(eval);
                 };
                 variable_values.set(*variable_id, eval.clone())?;
-                Ok(Constant::None.into())
+                Ok(Constant::default().into())
             }
             Expr::Introduce(variable_id, expr_id) => {
                 //SYNC(INTRO_AFTER_EVAL) Variable gets introduced after evaluating its initial value.
@@ -1420,7 +1601,7 @@ impl Ast {
                 };
                 variable_values.introduce(*variable_id, eval.clone());
 
-                Ok(Constant::None.into())
+                Ok(Constant::default().into())
             }
             Expr::While(expr_id, block) => loop {
                 let eval = self.evaluate_expr(*expr_id, variable_values)?;
@@ -1431,7 +1612,7 @@ impl Ast {
                 let b = constant.get_bool()?;
 
                 if !b {
-                    return Ok(Constant::None.into());
+                    return Ok(Constant::default().into());
                 }
 
                 let block_result = self.evaluate_block(block, variable_values)?;
@@ -1446,16 +1627,15 @@ impl Ast {
                 };
 
                 let iter = match iterable {
-                    Constant::List(rc) => rc.borrow().clone(),
+                    Constant::HashableConstant(HashableConstant::List(rc)) => rc.borrow().clone(),
                     _ => return Err(RuntimeError::NotIterable(iterable.clone())),
                 };
 
                 match var1 {
                     Some(var1) => {
                         for (i, c) in iter.into_iter().enumerate() {
-                            variable_values
-                                .introduce(*var0, Constant::Int(IntConstant::Small(i as i128)));
-                            variable_values.introduce(*var1, c);
+                            variable_values.introduce(*var0, (i as i128).into());
+                            variable_values.introduce(*var1, c.into());
 
                             let eval = self.evaluate_block(block, variable_values)?;
 
@@ -1469,7 +1649,7 @@ impl Ast {
                     }
                     None => {
                         for c in iter.into_iter() {
-                            variable_values.introduce(*var0, c);
+                            variable_values.introduce(*var0, c.into());
 
                             let eval = self.evaluate_block(block, variable_values)?;
 
@@ -1482,14 +1662,16 @@ impl Ast {
                     }
                 }
 
-                Ok(Constant::None.into())
+                Ok(Constant::default().into())
             }
             Expr::Negate(expr_id) => {
                 let inner_value = self.evaluate_expr(*expr_id, variable_values)?;
                 let Some(inner_value) = inner_value.some_or_please_return() else {
                     return Ok(inner_value);
                 };
-                Ok(Constant::Bool(!inner_value.get_bool()?).into())
+
+                let value: Constant = (!inner_value.get_bool()?).into();
+                Ok(value.into())
             }
         }
     }
@@ -1579,53 +1761,79 @@ impl Ast {
     ) -> Result<Constant, RuntimeError> {
         match internal_fun {
             InternalFun::New => {
-                if let Some(&Constant::Ty(ty)) = parameters.iter().collect_single() {
+                if let Some(&Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Ty(ty),
+                ))) = parameters.iter().collect_single()
+                {
                     match ty {
-                        Ty::List => return Ok(Constant::List(Default::default())),
+                        Ty::List => {
+                            return Ok(Constant::HashableConstant(HashableConstant::List(
+                                Default::default(),
+                            )))
+                        }
                         _ => return Err(RuntimeError::StaticFunctionOnWrongType(ty, internal_fun)),
                     }
                 }
             }
             InternalFun::Push => {
-                if let Some((Constant::List(list), c)) = parameters.iter().collect_tuple() {
+                if let Some((
+                    Constant::HashableConstant(HashableConstant::List(list)),
+                    Constant::HashableConstant(c),
+                )) = parameters.iter().collect_tuple()
+                {
                     (*list).borrow_mut().push(c.clone());
-                    return Ok(Constant::None);
+                    return Ok(Constant::default());
                 }
             }
             InternalFun::Get => {
-                if let Some((Constant::List(list), &Constant::Int(i))) =
-                    parameters.iter().collect_tuple()
+                if let Some((
+                    Constant::HashableConstant(HashableConstant::List(list)),
+                    &Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                        PrimitiveConstant::Int(i),
+                    )),
+                )) = parameters.iter().collect_tuple()
                 {
                     let IntConstant::Small(id) = i;
                     let id: usize = id
                         .try_into()
                         .map_err(|_| RuntimeError::IndexOutOfBounds(list.borrow().clone(), i))?;
-                    return list
-                        .borrow()
-                        .get(id)
-                        .ok_or_else(|| RuntimeError::IndexOutOfBounds(list.borrow().clone(), i))
-                        .cloned();
+
+                    let Some(result) = list.borrow().get(id).cloned() else {
+                        return Err(RuntimeError::IndexOutOfBounds(list.borrow().clone(), i));
+                    };
+                    return Ok(result.into());
                 }
             }
 
             InternalFun::Pop => {
-                if let Some(Constant::List(list)) = parameters.iter().collect_single() {
-                    return list.borrow_mut().pop().ok_or_else(|| {
-                        RuntimeError::InternalOperationInvalid(internal_fun, parameters.clone())
-                    });
+                if let Some(Constant::HashableConstant(HashableConstant::List(list))) =
+                    parameters.iter().collect_single()
+                {
+                    let Some(res) = list.borrow_mut().pop() else {
+                        return Err(RuntimeError::InternalOperationInvalid(
+                            internal_fun,
+                            parameters.clone(),
+                        ));
+                    };
+
+                    return Ok(res.into());
                 }
             }
             InternalFun::Len => {
-                if let Some(Constant::List(list)) = parameters.iter().collect_single() {
-                    return Ok(Constant::Int(IntConstant::Small(
-                        //TODO Cast so ok?
-                        list.borrow().len() as i128,
-                    )));
+                if let Some(Constant::HashableConstant(HashableConstant::List(list))) =
+                    parameters.iter().collect_single()
+                {
+                    //TODO Cast so okay?
+                    return Ok((list.borrow().len() as i128).into());
                 }
             }
             InternalFun::FromFile => {
-                if let Some((&Constant::Ty(ty), Constant::List(list))) =
-                    parameters.iter().collect_tuple()
+                if let Some((
+                    &Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                        PrimitiveConstant::Ty(ty),
+                    )),
+                    Constant::HashableConstant(HashableConstant::List(list)),
+                )) = parameters.iter().collect_tuple()
                 {
                     match ty {
                         Ty::List => {
@@ -1633,7 +1841,8 @@ impl Ast {
 
                             let file_content =
                                 read_to_string(&path).map_err(|err| RuntimeError::Io(err, path))?;
-                            let list = file_content.chars().map(Constant::Char).collect_vec();
+                            let list: Vec<HashableConstant> =
+                                file_content.chars().map(|c| c.into()).collect();
                             return Ok(list.into());
                         }
                         _ => return Err(RuntimeError::StaticFunctionOnWrongType(ty, internal_fun)),
@@ -1641,9 +1850,11 @@ impl Ast {
                 }
             }
             InternalFun::SplitWhitespace => {
-                if let Some(Constant::List(list)) = parameters.iter().collect_single() {
+                if let Some(Constant::HashableConstant(HashableConstant::List(list))) =
+                    parameters.iter().collect_single()
+                {
                     let string = try_list_to_string(&list.borrow())?;
-                    let result: Vec<Constant> = string
+                    let result: Vec<HashableConstant> = string
                         .split_whitespace()
                         .map(|sub| str_to_list(sub).into())
                         .collect_vec();
@@ -1652,8 +1863,12 @@ impl Ast {
                 }
             }
             InternalFun::Parse => {
-                if let Some((Constant::List(list), Constant::Ty(ty))) =
-                    parameters.iter().collect_tuple()
+                if let Some((
+                    Constant::HashableConstant(HashableConstant::List(list)),
+                    Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                        PrimitiveConstant::Ty(ty),
+                    )),
+                )) = parameters.iter().collect_tuple()
                 {
                     let string = try_list_to_string(&list.borrow())?;
 
@@ -1662,7 +1877,7 @@ impl Ast {
                             let i: i128 = string
                                 .parse()
                                 .map_err(|err| RuntimeError::Parse(string, Ty::Int, err))?;
-                            Constant::Int(IntConstant::Small(i))
+                            i.into()
                         }
                         _ => {
                             return Err(RuntimeError::InternalOperationInvalid(
@@ -1676,32 +1891,43 @@ impl Ast {
                 }
             }
             InternalFun::Sort => {
-                if let Some(Constant::List(list)) = parameters.iter().collect_single() {
+                if let Some(Constant::HashableConstant(HashableConstant::List(list))) =
+                    parameters.iter().collect_single()
+                {
                     let mut new_list = Vec::new();
                     for val in list.borrow().iter() {
-                        let &Constant::Int(i) = val else {
+                        let &HashableConstant::PrimitiveConstant(PrimitiveConstant::Int(i)) = val
+                        else {
                             return Err(RuntimeError::TypeError(Ty::Int, val.ty()));
                         };
                         new_list.push(i);
                     }
                     new_list.sort();
-                    let new_list = new_list.into_iter().map(Constant::Int).collect();
+                    let new_list = new_list
+                        .into_iter()
+                        .map(|i| HashableConstant::PrimitiveConstant(PrimitiveConstant::Int(i)))
+                        .collect();
 
                     *list.borrow_mut() = new_list;
 
-                    return Ok(Constant::None);
+                    return Ok(Constant::default());
                 }
             }
             InternalFun::Abs => {
-                if let Some(Constant::Int(i)) = parameters.iter().collect_single() {
+                if let Some(Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(i),
+                ))) = parameters.iter().collect_single()
+                {
                     let IntConstant::Small(i) = i;
-                    return Ok(Constant::Int(IntConstant::Small(i.abs())));
+                    return Ok(i.abs().into());
                 }
             }
             InternalFun::Lines => {
-                if let Some(Constant::List(list)) = parameters.iter().collect_single() {
+                if let Some(Constant::HashableConstant(HashableConstant::List(list))) =
+                    parameters.iter().collect_single()
+                {
                     let string = try_list_to_string(&list.borrow())?;
-                    let result: Vec<Constant> = string
+                    let result: Vec<HashableConstant> = string
                         .lines()
                         .map(|sub| str_to_list(sub).into())
                         .collect_vec();
@@ -1717,7 +1943,10 @@ impl Ast {
             }
             InternalFun::Invoke => {
                 let mut params_iter = parameters.iter();
-                if let Some(&Constant::Callable(callable)) = params_iter.next() {
+                if let Some(&Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Callable(callable),
+                ))) = params_iter.next()
+                {
                     //TODO Collect meh
                     return self.evaluate_call(
                         callable,
@@ -1779,11 +2008,11 @@ pub fn evaluate_debug(
 
 static MAIN: LazyLock<Word> = LazyLock::new(|| "main".try_into().expect("valid word"));
 
-fn try_list_to_string(list: &Vec<Constant>) -> Result<String, RuntimeError> {
+fn try_list_to_string(list: &Vec<HashableConstant>) -> Result<String, RuntimeError> {
     let mut s = String::new();
 
     for c in list {
-        let Constant::Char(c) = c else {
+        let HashableConstant::PrimitiveConstant(PrimitiveConstant::Char(c)) = c else {
             //TODO test case for that; maybe better error message due to context
             return Err(RuntimeError::TypeError(Ty::Char, c.ty()));
         };
@@ -1794,8 +2023,10 @@ fn try_list_to_string(list: &Vec<Constant>) -> Result<String, RuntimeError> {
     Ok(s)
 }
 
-fn str_to_list(s: &str) -> Vec<Constant> {
-    s.chars().map(Constant::Char).collect()
+fn str_to_list(s: &str) -> Vec<HashableConstant> {
+    s.chars()
+        .map(|c| HashableConstant::PrimitiveConstant(PrimitiveConstant::Char(c)))
+        .collect()
 }
 
 #[derive(Debug)]
@@ -1824,6 +2055,14 @@ struct Variable {
 impl Variable {
     fn new(name: Word, ty: Ty) -> Self {
         Self { name, ty }
+    }
+}
+
+impl From<char> for Constant {
+    fn from(value: char) -> Self {
+        Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+            PrimitiveConstant::Char(value),
+        ))
     }
 }
 
@@ -1987,9 +2226,9 @@ impl Parsee {
             self.next();
         }
 
-        let i = word.parse().unwrap();
+        let i: i128 = word.parse().unwrap();
 
-        Ok(Token::Literal(Constant::Int(IntConstant::Small(i))))
+        Ok(Token::Literal(i.into()))
     }
 
     fn error(&self, error: TokenizeError) -> SourceTokenizeError {
@@ -2024,7 +2263,7 @@ impl Parsee {
             return Err(self.error(TokenizeError::InvalidCharLiteral));
         };
 
-        Ok(Token::Literal(Constant::Char(c)))
+        Ok(Token::Literal(c.into()))
     }
 
     fn parse_string_literal(&mut self) -> Result<Token, SourceTokenizeError> {
@@ -2039,7 +2278,7 @@ impl Parsee {
                 return Ok(Token::Literal(list.into()));
             }
 
-            list.push(Constant::Char(c));
+            list.push(c.into());
         }
     }
 }
@@ -2147,11 +2386,17 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
     } else if keyword == "Callable" {
         Some(Token::Ty(Ty::Callable))
     } else if keyword == "true" {
-        Some(Token::Literal(Constant::Bool(true)))
+        Some(Token::Literal(true.into()))
     } else if keyword == "false" {
-        Some(Token::Literal(Constant::Bool(false)))
+        Some(Token::Literal(false.into()))
     } else {
         None
+    }
+}
+
+impl From<Vec<HashableConstant>> for Constant {
+    fn from(value: Vec<HashableConstant>) -> Self {
+        Self::HashableConstant(HashableConstant::List(Rc::new(RefCell::new(value))))
     }
 }
 
@@ -2206,6 +2451,7 @@ pub enum Ty {
     Int,
     Bool,
     None,
+    Dict,
     List,
     Range,
     Ty,
@@ -2224,6 +2470,7 @@ impl Display for Ty {
             Ty::Ty => write!(f, "TYPE"),
             Ty::Char => write!(f, "char"),
             Ty::Callable => write!(f, "Callable"),
+            Ty::Dict => write!(f, "Dict"),
         }
     }
 }
