@@ -1,13 +1,5 @@
 
-// import utils;
-
-fun map(list: List, callable: Callable) -> List {
-    val result = List.new();
-    for entry in list {
-        result.push(callable.invoke(entry))
-    }
-    result
-}
+import utils;
 
 fun parse_int(s: List) -> int {
     s.parse(int)
@@ -18,7 +10,7 @@ fun main() -> int {
 
     val number_strings: List = input_string.split_whitespace();
 
-    val numbers = number_strings.map(parse_int);
+    val numbers = number_strings.utils::map(parse_int);
 
     val left = List.new();
     val right = List.new();

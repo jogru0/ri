@@ -1,21 +1,17 @@
-use std::{env::args, fmt::Debug, fs::read_to_string, io::Error};
+use std::{env::args, fmt::Debug, path::Path};
 
 use log::error;
-use ri::parse::{ParseError, RuntimeError, SourceTokenizeError, Tokens};
+use ri::parse::{ModuleError, Modules, RuntimeError};
 use thiserror::Error;
 
 #[derive(Error)]
 enum MainError {
     #[error("no source file provided")]
     NoSourceFile,
-    #[error("Tokenize Error: {0}")]
-    TokenizeError(#[from] SourceTokenizeError),
-    #[error("Parse Error: {0}")]
-    ParseError(#[from] ParseError),
+    #[error("module error: {0}")]
+    ModuleError(#[from] ModuleError),
     #[error("Runtime Error: {0}")]
     RuntimeError(#[from] RuntimeError),
-    #[error("Io Error for '{0}': {1}")]
-    IoError(String, Error),
 }
 
 // Make main use Display, not Debug, for error reporting.
@@ -39,13 +35,9 @@ fn main() -> Result<(), MainError> {
 
     let path = args.get(1).ok_or(MainError::NoSourceFile)?;
 
-    let code = read_to_string(&args[1]).map_err(|err| MainError::IoError(path.into(), err))?;
+    let modules = Modules::from_entry_file(Path::new(path))?;
 
-    let tokens = Tokens::from_code(&code, path.clone())?;
-
-    let ast = tokens.parse()?;
-
-    let result = ast.evaluate_main()?;
+    let result = modules.evaluate_main()?;
 
     println!("Result: {result}");
 

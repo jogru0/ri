@@ -1,8 +1,10 @@
-use indexmap::{indexmap, IndexMap, IndexSet};
+use indexmap::{indexmap, indexset, IndexMap, IndexSet};
 use itertools::Itertools;
 use log::{debug, info};
 use std::hash::Hash;
+use std::iter::once;
 use std::ops::Neg;
+use std::path::{Path, PathBuf};
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -59,6 +61,9 @@ pub enum RuntimeError {
     KeyAlreadyExists(HashableConstant),
     #[error("key '{0}' does not exist")]
     KeyDoesNotExist(HashableConstant),
+    //TODO Test if we now can call variables without evoke.
+    #[error("cannot call '{0}'")]
+    NotCallable(Constant),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -341,11 +346,33 @@ pub struct ListId(usize);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 //TODO pub field
-pub struct FunId(pub usize);
+pub struct FunId {
+    module_id: ModuleId,
+    fun_in_module: usize,
+}
+
+impl FunId {
+    fn new(module_id: ModuleId, fun_in_module: usize) -> Self {
+        Self {
+            module_id,
+            fun_in_module,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+//TODO pub field
+pub struct ModuleId(pub usize);
+
+impl Display for ModuleId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl Display for FunId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}->{}", self.module_id, self.fun_in_module)
     }
 }
 
@@ -362,7 +389,7 @@ pub struct Block {
 
 #[derive(Clone)]
 pub struct Call {
-    callable: Callable,
+    callable: ExprId,
     arguments: ExprRange,
 }
 
@@ -739,6 +766,13 @@ pub enum ParseError {
     AlreadyDefinedFunction(Word),
     #[error("function '{0}' not defined")]
     NotDefinedFunction(Word),
+    #[error("module '{0}' not defined")]
+    NotDefinedModule(Word),
+    #[error("word '{0}' stands for multiple of variable, function, module")]
+    NotUniquelyDefined(Word),
+    //TODO more specific unified variants for these
+    #[error("nothing with name '{0}' defined")]
+    NotDefined(Word),
 }
 
 pub struct Tokens(Vec<Token>);
@@ -748,7 +782,7 @@ impl Tokens {
         &self.0
     }
 
-    pub fn from_code(chars: &str, filename: String) -> Result<Self, SourceTokenizeError> {
+    pub fn from_code(chars: &str, filename: PathBuf) -> Result<Self, SourceTokenizeError> {
         let mut vec = Vec::new();
 
         let mut p = Parsee::new(chars, filename);
@@ -762,29 +796,39 @@ impl Tokens {
         Ok(Self(vec))
     }
 
-    pub fn get_top_level_declarations(&self) -> Result<IndexSet<Word>, ParseError> {
+    pub fn get_top_level_declarations(
+        &self,
+    ) -> Result<(IndexSet<Word>, IndexSet<Word>), ParseError> {
         let mut stream = TokenStreamBasic::new(self);
 
         let mut fun_names = IndexSet::new();
+        let mut module_names = IndexSet::new();
 
         loop {
-            match stream.peek() {
-                None => break,
-                Some(Token::Fun) => {
-                    stream.next().expect("just peeked");
+            match stream.next() {
+                // TODO: Error flow
+                Err(_) => break,
+                Ok(Token::Fun) => {
                     let name = stream.expect_word()?;
+                    //TODO I don't like this clone.
                     let inserted = fun_names.insert(name.clone());
                     if !inserted {
                         return Err(ParseError::AlreadyDefinedFunction(name));
                     }
                 }
-                Some(_) => {
-                    stream.next().expect("just peeked");
+                Ok(Token::Import) => {
+                    let name = stream.expect_word()?;
+                    //TODO I don't like this clone.
+                    let inserted = module_names.insert(name.clone());
+                    if !inserted {
+                        return Err(ParseError::AlreadyDefinedFunction(name));
+                    }
                 }
+                Ok(_) => {}
             }
         }
 
-        Ok(fun_names)
+        Ok((fun_names, module_names))
     }
 }
 
@@ -825,23 +869,75 @@ pub struct TokenStream<'a> {
     index: usize,
     #[expect(dead_code)]
     int_variables: IndexSet<Word>,
-    //TODO pub
-    pub expressions: Expressions,
-    fun_names: &'a IndexSet<Word>,
     stack: Stack,
+    module_headers: &'a ModuleHeaders,
+    module_id: ModuleId,
+    expressions: &'a mut Expressions,
 }
 
+impl From<FunId> for Constant {
+    fn from(value: FunId) -> Self {
+        Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+            PrimitiveConstant::Callable(Callable::Fun(value)),
+        ))
+    }
+}
+
+//TODO pub
+pub struct ModuleHeader(IndexMap<Word, ModuleOrFun>);
+
+//TODO pub
+pub struct ModuleHeaders(pub Vec<ModuleHeader>);
+
 impl<'a> TokenStream<'a> {
-    pub fn new(tokens: &'a Tokens, fun_names: &'a IndexSet<Word>) -> Self {
+    pub fn new(
+        tokens: &'a Tokens,
+        module_headers: &'a ModuleHeaders,
+        module_id: ModuleId,
+        expressions: &'a mut Expressions,
+    ) -> Self {
         Self {
             tokens,
             index: 0,
             int_variables: IndexSet::new(),
-            expressions: Expressions::new(),
-            fun_names,
             stack: Stack::new(),
+            module_headers,
+            module_id,
+            expressions,
         }
     }
+
+    fn parse_module_expr(&mut self, module_id: ModuleId) -> Result<Expr, ParseError> {
+        self.expect(Token::DoubleColon)?;
+        let entry = self.expect_word()?;
+
+        match self.get_module_or_fun(module_id, &entry)? {
+            ModuleOrFun::Module(module_id) => self.parse_module_expr(module_id),
+            ModuleOrFun::Fun(fun_id) => Ok(Expr::Constant(fun_id.into())),
+        }
+    }
+
+    fn get_module_or_fun(
+        &self,
+        module_id: ModuleId,
+        entry: &Word,
+    ) -> Result<ModuleOrFun, ParseError> {
+        //TODO revisit expect
+        self.module_headers
+            .0
+            .get(module_id.0)
+            .expect("module_id came from us, I hope")
+            .0
+            .get(entry)
+            .ok_or(ParseError::NotDefined(entry.clone()))
+            .copied()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ModuleOrFun {
+    Module(ModuleId),
+    Fun(FunId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -995,12 +1091,30 @@ impl TokenStream<'_> {
         Ok((ast, follow_up))
     }
 
-    fn get_fun_id(&mut self, word: &Word) -> Result<FunId, ParseError> {
-        Ok(FunId(
-            self.fun_names
-                .get_index_of(word)
-                .ok_or(ParseError::NotDefinedFunction(word.clone()))?,
-        ))
+    fn interpret_word(&mut self, word: &Word) -> Result<Expr, ParseError> {
+        // //TODO Err flow
+        let variable_id = self.stack.get(word).ok();
+        let module_or_fun = self.get_module_or_fun(self.module_id, word).ok();
+        let internal_fun = InternalFun::get(word);
+
+        match (variable_id, module_or_fun, internal_fun) {
+            (Some(variable_id), None, None) => {
+                if self.entertain(Token::Assign) {
+                    let expr = self.parse_expr()?;
+                    return Ok(Expr::Assign(variable_id, self.expressions.add(expr)));
+                }
+                Ok(Expr::Variable(variable_id))
+            }
+            (None, Some(ModuleOrFun::Fun(fun_id)), None) => {
+                Ok(Expr::Constant(Callable::Fun(fun_id).into()))
+            }
+            (None, Some(ModuleOrFun::Module(module_id)), None) => self.parse_module_expr(module_id),
+            (None, None, Some(internal_fun)) => {
+                Ok(Expr::Constant(Callable::InternalFun(internal_fun).into()))
+            }
+            (None, None, None) => Err(ParseError::NotDefined(word.clone())),
+            (_, _, _) => Err(ParseError::NotUniquelyDefined(word.clone())),
+        }
     }
 
     fn parse_non_binary(&mut self) -> Result<Expr, ParseError> {
@@ -1032,31 +1146,11 @@ impl TokenStream<'_> {
                 Expr::Return(self.expressions.add(expr))
             }
             Token::Word(word) => {
-                // //TODO Err flow
-                // let variable_id = self.stack.get(&word).ok();
-                // let fun_id = self.fun_names.get_index_of(&word);
-                // let module_id = self.mod_names.get_index_of(&word);
-
-                match self.peek() {
-                    Some(Token::ParanLeft) => self.parse_fun_arguments(word, None)?,
-                    Some(Token::Assign) => {
-                        self.expect(Token::Assign).expect("just peeked");
-                        let expr = self.parse_expr()?;
-
-                        Expr::Assign(self.stack.get(&word)?, self.expressions.add(expr))
-                    }
-                    _ =>
-                    //TODO: in doubt, should assume fun, not var.
-                    //TODO Err flow
-                    {
-                        if let Some(internal_fun) = InternalFun::get(&word) {
-                            Expr::Constant(Callable::InternalFun(internal_fun).into())
-                        } else if let Ok(variable_id) = self.stack.get(&word) {
-                            Expr::Variable(variable_id)
-                        } else {
-                            Expr::Constant(Callable::Fun(self.get_fun_id(&word)?).into())
-                        }
-                    }
+                let expr = self.interpret_word(&word)?;
+                if let Some(Token::ParanLeft) = self.peek() {
+                    self.parse_fun_arguments(expr, None)?
+                } else {
+                    expr
                 }
             }
 
@@ -1071,7 +1165,8 @@ impl TokenStream<'_> {
 
         while self.entertain(Token::Dot) {
             let name = self.expect_word()?;
-            expr = self.parse_fun_arguments(name, Some(expr))?;
+            let callable_expr = self.interpret_word(&name)?;
+            expr = self.parse_fun_arguments(callable_expr, Some(expr))?;
         }
 
         Ok(expr)
@@ -1376,9 +1471,11 @@ impl TokenStream<'_> {
 
     fn parse_fun_arguments(
         &mut self,
-        name: Word,
+        callable: Expr,
         leading: Option<Expr>,
     ) -> Result<Expr, ParseError> {
+        let callable = self.expressions.add(callable);
+
         let (statements, _) = self.parse_expression_list_and_has_trailing_separator(
             Token::ParanLeft,
             Token::Comma,
@@ -1389,12 +1486,6 @@ impl TokenStream<'_> {
 
         let range = self.expressions.add_range(statements);
 
-        let callable = if let Some(internal_fun) = InternalFun::get(&name) {
-            Callable::InternalFun(internal_fun)
-        } else {
-            Callable::Fun(self.get_fun_id(&name)?)
-        };
-
         Ok(Expr::Call(Call {
             callable,
             arguments: range,
@@ -1402,136 +1493,122 @@ impl TokenStream<'_> {
     }
 }
 
-impl Tokens {
-    pub fn parse(&self) -> Result<Ast, ParseError> {
-        let fun_names = self.get_top_level_declarations()?;
-
-        let mut funs = Vec::new();
-
-        let mut ts = TokenStream::new(self, &fun_names);
-
-        loop {
-            match ts.peek() {
-                None => break,
-                Some(Token::Fun) => {
-                    let fun: Fun = ts.parse_fun()?;
-                    assert_eq!(Some(&fun.name), fun_names.get_index(funs.len()));
-                    funs.push(fun);
-                }
-                Some(Token::Import) => {
-                    ts.next().expect("just peeked");
-                    ts.expect_word()?;
-                    ts.expect(Token::Semicolon)?;
-                }
-                Some(unexpected) => {
-                    return Err(ParseError::UnexpectedToken(
-                        unexpected,
-                        format!(
-                            "expected a top level declaration (currently {} or {}))",
-                            Token::Fun,
-                            Token::Import
-                        ),
-                    ))
-                }
-            }
-        }
-
-        // This should be implicit by the above code.
-        assert!(ts.is_fully_parsed());
-
-        let entry_point = ts.fun_names.get_index_of(&*MAIN).map(FunId);
-        //TODO: Verify that there are no arguments for main?
-
-        Ok(Ast::new(funs, ts.expressions, entry_point))
+pub struct Module {
+    ast: Ast,
+}
+impl Module {
+    fn new(ast: Ast) -> Self {
+        Self { ast }
     }
 }
 
-pub struct Expressions {
-    vec: Vec<Expr>,
-}
-impl Expressions {
-    fn new() -> Self {
-        Self { vec: Vec::new() }
-    }
-
-    fn add(&mut self, expr: Expr) -> ExprId {
-        let res = self.next_expr_id();
-        self.vec.push(expr);
-        res
-    }
-
-    fn get(&self, expr_id: ExprId) -> &Expr {
-        &self.vec[expr_id.0]
-    }
-
-    //TODO private
-    fn next_expr_id(&self) -> ExprId {
-        ExprId(self.vec.len())
-    }
-
-    fn add_range(&mut self, exprs: impl IntoIterator<Item = Expr>) -> ExprRange {
-        let start = self.next_expr_id();
-        self.vec.extend(exprs);
-        let end = self.next_expr_id();
-        ExprRange { start, end }
-    }
+#[derive(Error, Debug)]
+pub enum ModuleError {
+    #[error("Tokenize Error: {0}")]
+    TokenizeError(#[from] SourceTokenizeError),
+    #[error("Parse Error: {0}")]
+    ParseError(#[from] ParseError),
+    #[error("Runtime Error: {0}")]
+    RuntimeError(#[from] RuntimeError),
+    #[error("Io Error for '{0}': {1}")]
+    IoError(PathBuf, std::io::Error),
 }
 
-impl From<Ty> for Constant {
-    fn from(value: Ty) -> Self {
-        Constant::HashableConstant(HashableConstant::PrimitiveConstant(PrimitiveConstant::Ty(
-            value,
-        )))
-    }
-}
-
-impl From<i128> for Constant {
-    fn from(value: i128) -> Self {
-        Constant::HashableConstant(HashableConstant::PrimitiveConstant(PrimitiveConstant::Int(
-            IntConstant::Small(value),
-        )))
-    }
-}
-
-impl From<char> for HashableConstant {
-    fn from(value: char) -> Self {
-        HashableConstant::PrimitiveConstant(PrimitiveConstant::Char(value))
-    }
-}
-
-impl From<HashableConstant> for Constant {
-    fn from(value: HashableConstant) -> Self {
-        Constant::HashableConstant(value)
-    }
-}
-impl From<Vec<HashableConstant>> for HashableConstant {
-    fn from(value: Vec<HashableConstant>) -> Self {
-        HashableConstant::List(Rc::new(RefCell::new(value)))
-    }
-}
-
-pub struct Ast {
-    funs: Vec<Fun>,
+pub struct Modules {
+    modules: Vec<Module>,
     expressions: Expressions,
     entry_point: Option<FunId>,
 }
 
-// pub struct AnnotatedAst {
-//     ast: Ast,
-// }
-// impl AnnotatedAst {
-//     pub fn to_code(&self) -> String {
-//         for fun in self.ast.funs {
-//             self.to_code_fun(fun)
-//         }
-//     }
+impl Modules {
+    fn new(modules: Vec<Module>, expressions: Expressions, entry_point: Option<FunId>) -> Self {
+        Self {
+            modules,
+            expressions,
+            entry_point,
+        }
+    }
 
-//     fn to_code_fun(&self, fun: Fun) {
-//         todo!()
-//     }
-// }
+    fn get_fun(&self, fun_id: FunId) -> &Fun {
+        self.modules
+            .get(fun_id.module_id.0)
+            .expect("fun_id comes from us")
+            .ast
+            .funs
+            .get(fun_id.fun_in_module)
+            .expect("fun_id comes from us")
+    }
 
-impl Ast {
+    pub fn evaluate_main(&self) -> Result<Constant, RuntimeError> {
+        let mut variable_values = VariableValues::new();
+
+        self.evaluate_fun(
+            self.entry_point.ok_or(RuntimeError::NoEntryPoint)?,
+            Vec::new(),
+            &mut variable_values,
+        )
+    }
+
+    pub fn evaluate_fun(
+        &self,
+        fun_id: FunId,
+        //TODO: This allocation slows us down.
+        parameters: Vec<Constant>,
+        variable_values: &mut VariableValues,
+    ) -> Result<Constant, RuntimeError> {
+        let fun = self.get_fun(fun_id);
+
+        debug!(
+            "calling {} ({} parameters) with stack size {} and old reference {}",
+            fun.name,
+            fun.variables.len(),
+            variable_values.values.len(),
+            variable_values.reference
+        );
+
+        if fun.variables.len() != parameters.len() {
+            return Err(RuntimeError::IncompatibleParameters(
+                parameters.iter().map(|c| c.ty()).collect(),
+                fun.variables.clone(),
+                fun.name.clone(),
+            ));
+        }
+
+        let old_reference = variable_values.reference;
+        variable_values.reference = variable_values.values.len();
+
+        for (id, parameter) in parameters.into_iter().enumerate() {
+            variable_values.introduce(VariableId(id), parameter);
+        }
+
+        let result = self
+            .evaluate_block(&fun.body, variable_values)?
+            .unwrap_on_outer_layer();
+
+        assert_eq!(
+            variable_values.values.len() - variable_values.reference,
+            fun.variables.len()
+        );
+
+        //TODO: Check when parsing fun
+        if result.ty() != fun.ty {
+            return Err(RuntimeError::WrongReturnType(
+                fun.name.clone(),
+                fun.ty,
+                result.ty(),
+            ));
+        }
+
+        variable_values.values.truncate(variable_values.reference);
+        variable_values.reference = old_reference;
+
+        Ok(result)
+    }
+
+    fn path_of(base_path: &Path, name: Word) -> PathBuf {
+        base_path.with_file_name(format!("{}.ri", name.0))
+    }
+
     fn evaluate_block_unscoped(
         &self,
         block: &Block,
@@ -1623,6 +1700,18 @@ impl Ast {
                 }
             }
             Expr::Call(call) => {
+                let callable = self.evaluate_expr(call.callable, variable_values)?;
+                let Some(callable) = callable.some_or_please_return() else {
+                    return Ok(callable);
+                };
+
+                let &Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Callable(callable),
+                )) = callable
+                else {
+                    return Err(RuntimeError::NotCallable(callable.clone()));
+                };
+
                 let mut parameters = Vec::new();
                 for id in call.arguments.start.0..call.arguments.end.0 {
                     let eval = self.evaluate_expr(ExprId(id), variable_values)?;
@@ -1633,7 +1722,7 @@ impl Ast {
                     parameters.push(parameter.clone());
                 }
 
-                self.evaluate_call(call.callable, parameters, variable_values)
+                self.evaluate_call(callable, parameters, variable_values)
                     .map(|c| c.into())
             }
             Expr::Assign(variable_id, expr_id) => {
@@ -1748,67 +1837,6 @@ impl Ast {
                 self.evaluate_internal_fun(internal_fun, parameters, variable_values)
             }
         }?;
-
-        Ok(result)
-    }
-
-    pub fn evaluate_fun(
-        &self,
-        fun_id: FunId,
-        //TODO: This allocation slows us down.
-        parameters: Vec<Constant>,
-        variable_values: &mut VariableValues,
-    ) -> Result<Constant, RuntimeError> {
-        let fun = self
-        .funs
-        .get(fun_id.0)
-        .unwrap() //TODO
-        // .ok_or_else(|| RuntimeError::UnknownFunction(name.clone()))?
-        ;
-
-        debug!(
-            "calling {} ({} parameters) with stack size {} and old reference {}",
-            fun.name,
-            fun.variables.len(),
-            variable_values.values.len(),
-            variable_values.reference
-        );
-
-        if fun.variables.len() != parameters.len() {
-            return Err(RuntimeError::IncompatibleParameters(
-                parameters.iter().map(|c| c.ty()).collect(),
-                fun.variables.clone(),
-                fun.name.clone(),
-            ));
-        }
-
-        let old_reference = variable_values.reference;
-        variable_values.reference = variable_values.values.len();
-
-        for (id, parameter) in parameters.into_iter().enumerate() {
-            variable_values.introduce(VariableId(id), parameter);
-        }
-
-        let result = self
-            .evaluate_block(&fun.body, variable_values)?
-            .unwrap_on_outer_layer();
-
-        assert_eq!(
-            variable_values.values.len() - variable_values.reference,
-            fun.variables.len()
-        );
-
-        //TODO: Check when parsing fun
-        if result.ty() != fun.ty {
-            return Err(RuntimeError::WrongReturnType(
-                fun.name.clone(),
-                fun.ty,
-                result.ty(),
-            ));
-        }
-
-        variable_values.values.truncate(variable_values.reference);
-        variable_values.reference = old_reference;
 
         Ok(result)
     }
@@ -2062,22 +2090,214 @@ impl Ast {
         ))
     }
 
-    pub fn evaluate_main(&self) -> Result<Constant, RuntimeError> {
-        let mut variable_values = VariableValues::new();
+    pub fn from_entry_file(path_of_entry_module: &Path) -> Result<Self, ModuleError> {
+        let mut path_to_module_id: IndexSet<PathBuf> = indexset! { path_of_entry_module.into() };
+        let mut module_headers = Vec::new();
+        let mut tokens_vec = Vec::new();
 
-        self.evaluate_fun(
-            self.entry_point.ok_or(RuntimeError::NoEntryPoint)?,
-            Vec::new(),
-            &mut variable_values,
-        )
+        while let Some(path_of_current_module) =
+            path_to_module_id.get_index(module_headers.len()).cloned()
+        {
+            let code = read_to_string(path_of_current_module.clone())
+                .map_err(|err| ModuleError::IoError(path_of_current_module.clone(), err))?;
+
+            let tokens = Tokens::from_code(&code, path_of_current_module.clone())?;
+
+            let (fun_names, module_names) = tokens.get_top_level_declarations()?;
+
+            let mut map = IndexMap::new();
+            for (i, fun_name) in fun_names.into_iter().enumerate() {
+                map.insert(
+                    fun_name,
+                    ModuleOrFun::Fun(FunId {
+                        module_id: ModuleId(module_headers.len()),
+                        fun_in_module: i,
+                    }),
+                );
+            }
+            for module_name in module_names {
+                let path_of_referenced_module =
+                    Self::path_of(&path_of_current_module, module_name.clone());
+                let (i, _) = path_to_module_id.insert_full(path_of_referenced_module);
+                map.insert(module_name, ModuleOrFun::Module(ModuleId(i)));
+            }
+
+            module_headers.push(ModuleHeader(map));
+            tokens_vec.push(tokens);
+        }
+
+        let module_headers = ModuleHeaders(module_headers);
+
+        let mut expressions = Expressions::new();
+        let mut modules = Vec::new();
+
+        for (i, tokens) in tokens_vec.into_iter().enumerate() {
+            let module_id = ModuleId(i);
+            modules.push(tokens.parse(&module_headers, module_id, &mut expressions)?);
+        }
+
+        let entry_point = module_headers
+            .0
+            .first()
+            .expect("entry module")
+            .0
+            .get(&*MAIN)
+            .and_then(|module_or_fun| match module_or_fun {
+                ModuleOrFun::Module(_) => None,
+                ModuleOrFun::Fun(fun_id) => Some(fun_id),
+            })
+            .copied();
+
+        Ok(Modules::new(modules, expressions, entry_point))
+    }
+}
+
+impl Tokens {
+    pub fn parse(
+        &self,
+        module_headers: &ModuleHeaders,
+        module_id: ModuleId,
+        expressions: &mut Expressions,
+    ) -> Result<Module, ParseError> {
+        let mut funs = Vec::new();
+
+        let mut ts = TokenStream::new(self, module_headers, module_id, expressions);
+
+        loop {
+            match ts.peek() {
+                None => break,
+                Some(Token::Fun) => {
+                    let fun: Fun = ts.parse_fun()?;
+                    assert_eq!(
+                        module_headers
+                            .0
+                            .get(module_id.0)
+                            .expect("own id should be there")
+                            .0
+                            .get(&fun.name),
+                        Some(&ModuleOrFun::Fun(FunId::new(module_id, funs.len())))
+                    );
+                    funs.push(fun);
+                }
+                Some(Token::Import) => {
+                    ts.next().expect("just peeked");
+                    ts.expect_word()?;
+                    ts.expect(Token::Semicolon)?;
+                }
+                Some(unexpected) => {
+                    return Err(ParseError::UnexpectedToken(
+                        unexpected,
+                        format!(
+                            "expected a top level declaration (currently {} or {}))",
+                            Token::Fun,
+                            Token::Import
+                        ),
+                    ))
+                }
+            }
+        }
+
+        // This should be implicit by the above code.
+        assert!(ts.is_fully_parsed());
+
+        //TODO: Verify that there are no arguments for main?
+
+        Ok(Module::new(Ast::new(funs)))
+    }
+}
+
+pub struct Expressions {
+    vec: Vec<Expr>,
+}
+impl Expressions {
+    pub fn new() -> Self {
+        Self { vec: Vec::new() }
     }
 
-    fn new(funs: Vec<Fun>, expressions: Expressions, entry_point: Option<FunId>) -> Self {
-        Self {
-            funs,
-            expressions,
-            entry_point,
-        }
+    fn add(&mut self, expr: Expr) -> ExprId {
+        let res = self.next_expr_id();
+        self.vec.push(expr);
+        res
+    }
+
+    fn get(&self, expr_id: ExprId) -> &Expr {
+        &self.vec[expr_id.0]
+    }
+
+    //TODO private
+    fn next_expr_id(&self) -> ExprId {
+        ExprId(self.vec.len())
+    }
+
+    fn add_range(&mut self, exprs: impl IntoIterator<Item = Expr>) -> ExprRange {
+        let start = self.next_expr_id();
+        self.vec.extend(exprs);
+        let end = self.next_expr_id();
+        ExprRange { start, end }
+    }
+}
+
+impl Default for Expressions {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl From<Ty> for Constant {
+    fn from(value: Ty) -> Self {
+        Constant::HashableConstant(HashableConstant::PrimitiveConstant(PrimitiveConstant::Ty(
+            value,
+        )))
+    }
+}
+
+impl From<i128> for Constant {
+    fn from(value: i128) -> Self {
+        Constant::HashableConstant(HashableConstant::PrimitiveConstant(PrimitiveConstant::Int(
+            IntConstant::Small(value),
+        )))
+    }
+}
+
+impl From<char> for HashableConstant {
+    fn from(value: char) -> Self {
+        HashableConstant::PrimitiveConstant(PrimitiveConstant::Char(value))
+    }
+}
+
+impl From<HashableConstant> for Constant {
+    fn from(value: HashableConstant) -> Self {
+        Constant::HashableConstant(value)
+    }
+}
+impl From<Vec<HashableConstant>> for HashableConstant {
+    fn from(value: Vec<HashableConstant>) -> Self {
+        HashableConstant::List(Rc::new(RefCell::new(value)))
+    }
+}
+
+pub struct Ast {
+    funs: Vec<Fun>,
+}
+
+// pub struct AnnotatedAst {
+//     ast: Ast,
+// }
+// impl AnnotatedAst {
+//     pub fn to_code(&self) -> String {
+//         for fun in self.ast.funs {
+//             self.to_code_fun(fun)
+//         }
+//     }
+
+//     fn to_code_fun(&self, fun: Fun) {
+//         todo!()
+//     }
+// }
+
+impl Ast {
+    fn new(funs: Vec<Fun>) -> Self {
+        Self { funs }
     }
 }
 
@@ -2100,9 +2320,19 @@ pub fn evaluate_debug(
 
     let main = Fun::new(name.clone(), Variables::new(), ty, block);
 
-    let ast = Ast::new(vec![main], expressions, Some(FunId(0)));
+    let main_id = FunId::new(ModuleId(0), 0);
 
-    ast.evaluate_main()
+    let ast = Ast::new(vec![main]);
+
+    let module = Module::new(ast);
+
+    let modules = Modules {
+        modules: vec![module],
+        expressions,
+        entry_point: Some(main_id),
+    };
+
+    modules.evaluate_main()
 }
 
 static MAIN: LazyLock<Word> = LazyLock::new(|| "main".try_into().expect("valid word"));
@@ -2182,7 +2412,7 @@ struct Parsee {
     lines: Vec<Vec<char>>,
     current_line_id: usize,
     current_char_id: usize,
-    filename: String,
+    filename: PathBuf,
 }
 
 impl Parsee {
@@ -2212,8 +2442,11 @@ impl Parsee {
         Some(c)
     }
 
-    fn new(chars: &str, filename: String) -> Self {
-        let lines = chars.lines().map(|line| line.chars().collect()).collect();
+    fn new(chars: &str, filename: PathBuf) -> Self {
+        let lines = chars
+            .lines()
+            .map(|line| line.chars().chain(once('\n')).collect())
+            .collect();
         let mut res = Self {
             lines,
             current_line_id: 0,
@@ -2386,7 +2619,7 @@ impl Parsee {
 pub struct SourceError<E: Error> {
     line_id: usize,
     character_id: usize,
-    filename: String,
+    filename: PathBuf,
     line: String,
     error: E,
 }
@@ -2401,7 +2634,7 @@ impl<E: Display + Error> Display for SourceError<E> {
 
         write!(
             f,
-            "{}:{}:{}\n{}\n{}\n{}",
+            "{:?}:{}:{}\n{}\n{}\n{}",
             self.filename,
             self.line_id + 1,
             self.character_id,
@@ -2415,7 +2648,7 @@ impl<E: Display + Error> Display for SourceError<E> {
 pub type SourceTokenizeError = SourceError<TokenizeError>;
 
 impl<E: Error> SourceError<E> {
-    fn new(filename: String, line_id: usize, character_id: usize, line: String, error: E) -> Self {
+    fn new(filename: PathBuf, line_id: usize, character_id: usize, line: String, error: E) -> Self {
         Self {
             filename,
             line_id,
@@ -2501,14 +2734,15 @@ impl From<Vec<HashableConstant>> for Constant {
     }
 }
 
-//TODO pub
+// TODO pub
 pub mod word {
     use std::fmt::Display;
 
     use super::TokenizeError;
 
     #[derive(Hash, PartialEq, Eq, Debug, Clone)]
-    pub struct Word(String);
+    // TODO private
+    pub struct Word(pub String);
 
     impl TryFrom<String> for Word {
         type Error = TokenizeError;
