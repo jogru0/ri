@@ -1,0 +1,20 @@
+fun main() -> bool {
+    val a = List.new();
+    val b = List.new();
+
+    val value_compare = a == b;
+
+    val c = List.new();
+    val d = List.new();
+
+    c.push(a);
+    d.push(b);
+
+    val recursive_value_compare = c == d;
+
+    a.push(List.new());
+
+    val recursive_unequal = c != d;
+
+    value_compare && recursive_value_compare && recursive_unequal
+}

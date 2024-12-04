@@ -50,3 +50,10 @@ fn ex5() {
 
     assert.success().code(0).stdout("Result: 2\n");
 }
+
+#[test]
+fn ex6() {
+    let assert = run("res/examples/ex6.ri");
+
+    assert.success().code(0).stdout("Result: true\n");
+}
