@@ -2,6 +2,7 @@ use indexmap::{indexmap, IndexMap, IndexSet};
 use itertools::Itertools;
 use log::{debug, info};
 use std::hash::Hash;
+use std::ops::Neg;
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -54,11 +55,33 @@ pub enum RuntimeError {
     Parse(String, Ty, std::num::ParseIntError),
     #[error("cannot iterate over '{0}'")]
     NotIterable(Constant),
+    #[error("key '{0}' already exists")]
+    KeyAlreadyExists(HashableConstant),
+    #[error("key '{0}' does not exist")]
+    KeyDoesNotExist(HashableConstant),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum IntConstant {
     Small(i128),
+}
+
+impl From<IntConstant> for Constant {
+    fn from(value: IntConstant) -> Self {
+        Constant::HashableConstant(HashableConstant::PrimitiveConstant(PrimitiveConstant::Int(
+            value,
+        )))
+    }
+}
+
+impl Neg for IntConstant {
+    type Output = IntConstant;
+
+    fn neg(self) -> Self::Output {
+        match self {
+            IntConstant::Small(i) => IntConstant::Small(-i),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -168,6 +191,20 @@ impl Constant {
         } else {
             let actual = self.ty();
             let expected = Ty::Bool;
+            assert_ne!(actual, expected);
+            Err(RuntimeError::TypeError(expected, actual))
+        }
+    }
+
+    fn get_int(&self) -> Result<IntConstant, RuntimeError> {
+        if let Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+            PrimitiveConstant::Int(i),
+        )) = self
+        {
+            Ok(*i)
+        } else {
+            let actual = self.ty();
+            let expected = Ty::Int;
             assert_ne!(actual, expected);
             Err(RuntimeError::TypeError(expected, actual))
         }
@@ -290,6 +327,7 @@ pub enum Expr {
     Introduce(VariableId, ExprId),
     For(VariableId, Option<VariableId>, ExprId, Block),
     Negate(ExprId),
+    Minus(ExprId),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -358,6 +396,9 @@ pub enum InternalFun {
     Sort,
     Abs,
     Lines,
+    SetNew,
+    Has,
+    Keys,
 }
 
 impl Display for InternalFun {
@@ -376,6 +417,9 @@ impl Display for InternalFun {
             InternalFun::Lines => write!(f, "lines"),
             InternalFun::Debug => write!(f, "debug"),
             InternalFun::Invoke => write!(f, "invoke"),
+            InternalFun::SetNew => write!(f, "set_new"),
+            InternalFun::Has => write!(f, "has"),
+            InternalFun::Keys => write!(f, "keys"),
         }
     }
 }
@@ -395,6 +439,9 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
         "lines".try_into().expect("const") => InternalFun::Lines,
         "debug".try_into().expect("const") => InternalFun::Debug,
         "invoke".try_into().expect("const") => InternalFun::Invoke,
+        "set_new".try_into().expect("const") => InternalFun::SetNew,
+        "has".try_into().expect("const") => InternalFun::Has,
+        "keys".try_into().expect("const") => InternalFun::Keys,
     }
 });
 
@@ -973,6 +1020,10 @@ impl TokenStream<'_> {
             Token::Negate => {
                 let inner_expr = self.parse_non_binary()?;
                 Expr::Negate(self.expressions.add(inner_expr))
+            }
+            Token::BinaryOperator(BinaryOperator::Minus) => {
+                let inner_expr = self.parse_non_binary()?;
+                Expr::Minus(self.expressions.add(inner_expr))
             }
             Token::Ty(ty) => Expr::Constant(ty.into()),
             Token::Return => {
@@ -1673,6 +1724,15 @@ impl Ast {
                 let value: Constant = (!inner_value.get_bool()?).into();
                 Ok(value.into())
             }
+            Expr::Minus(expr_id) => {
+                let inner_value = self.evaluate_expr(*expr_id, variable_values)?;
+                let Some(inner_value) = inner_value.some_or_please_return() else {
+                    return Ok(inner_value);
+                };
+
+                let value: Constant = (-inner_value.get_int()?).into();
+                Ok(value.into())
+            }
         }
     }
 
@@ -1771,6 +1831,7 @@ impl Ast {
                                 Default::default(),
                             )))
                         }
+                        Ty::Dict => return Ok(Constant::Dict(Default::default())),
                         _ => return Err(RuntimeError::StaticFunctionOnWrongType(ty, internal_fun)),
                     }
                 }
@@ -1802,6 +1863,15 @@ impl Ast {
                         return Err(RuntimeError::IndexOutOfBounds(list.borrow().clone(), i));
                     };
                     return Ok(result.into());
+                }
+
+                if let Some((Constant::Dict(dict), Constant::HashableConstant(key))) =
+                    parameters.iter().collect_tuple()
+                {
+                    let Some(result) = dict.borrow().get(key).cloned() else {
+                        return Err(RuntimeError::KeyDoesNotExist(key.clone()));
+                    };
+                    return Ok(result);
                 }
             }
 
@@ -1953,6 +2023,35 @@ impl Ast {
                         params_iter.cloned().collect(),
                         variable_values,
                     );
+                }
+            }
+            InternalFun::SetNew => {
+                if let Some((Constant::Dict(dict), Constant::HashableConstant(key), value)) =
+                    parameters.iter().collect_tuple()
+                {
+                    //TODO What if key is mutated? Does this break indexmap invariants?
+                    match dict.borrow_mut().entry(key.clone()) {
+                        indexmap::map::Entry::Occupied(_) => {
+                            return Err(RuntimeError::KeyAlreadyExists(key.clone()))
+                        }
+                        indexmap::map::Entry::Vacant(vacant_entry) => {
+                            vacant_entry.insert(value.clone())
+                        }
+                    };
+
+                    return Ok(Constant::default());
+                }
+            }
+            InternalFun::Has => {
+                if let Some((Constant::Dict(dict), Constant::HashableConstant(key))) =
+                    parameters.iter().collect_tuple()
+                {
+                    return Ok(dict.borrow().contains_key(key).into());
+                }
+            }
+            InternalFun::Keys => {
+                if let Some(Constant::Dict(dict)) = parameters.iter().collect_single() {
+                    return Ok(dict.borrow().keys().cloned().collect_vec().into());
                 }
             }
         }
@@ -2357,6 +2456,8 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
         Some(Token::Return)
     } else if keyword == "List" {
         Some(Token::Ty(Ty::List))
+    } else if keyword == "Dict" {
+        Some(Token::Ty(Ty::Dict))
     } else if keyword == "Range" {
         Some(Token::Ty(Ty::Range))
     } else if keyword == "int" {

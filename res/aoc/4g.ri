@@ -1,0 +1,88 @@
+fun point(x: int, y: int) -> List {
+    val result = List.new();
+    result.push(x);
+    result.push(y);
+    result
+}
+
+fun add(p: List, q: List) -> List {
+    val result = List.new();
+
+    val x = p.get(0) + q.get(0);
+    val y = p.get(1) + q.get(1);
+
+    result.push(x);
+    result.push(y);
+
+    result
+}
+
+fun sub(p: List, q: List) -> List {
+    val result = List.new();
+
+    val x = p.get(0) - q.get(0);
+    val y = p.get(1) - q.get(1);
+
+    result.push(x);
+    result.push(y);
+
+    result
+}
+
+fun parse_grid(input_string: List) -> Dict {
+    val result = Dict.new();
+
+    for y, line in input_string.lines() {
+        for x, c in line {
+            val key = point(x, y);
+            result.set_new(key, c); 
+        }
+    }
+
+
+    result
+}
+
+fun expect(grid: Dict, p: List, expected: char) -> bool {
+     if !grid.has(p) {
+            return false;
+        }
+        val actual = grid.get(p);
+        expected == actual
+}
+
+fun look_for(grid: Dict, pivot: List, dir1: List, dir2: List) -> bool {
+    grid.expect(pivot, 'A') &&
+    grid.expect(pivot.add(dir1), 'M') &&
+    grid.expect(pivot.add(dir2), 'M') &&
+    grid.expect(pivot.sub(dir1), 'S') &&
+    grid.expect(pivot.sub(dir2), 'S') 
+}
+
+
+fun main() -> int {
+    val input_string: List = List.from_file("res/aoc/4.txt");
+    
+    val grid = parse_grid(input_string);
+
+    val dirs1 = List.new();
+    dirs1.push(point(1, 1));
+    dirs1.push(point(-1, -1));
+    
+    val dirs2 = List.new();
+    dirs2.push(point(-1, 1));
+    dirs2.push(point(1, -1)); 
+
+    val sum = 0;
+    for pivot in grid.keys() {
+        for dir1 in dirs1 {
+            for dir2 in dirs2 {
+                if look_for(grid, pivot, dir1, dir2) {
+                    sum = sum + 1;
+                }
+            }
+        }
+    }
+
+    sum
+}

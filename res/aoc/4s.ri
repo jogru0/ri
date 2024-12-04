@@ -1,0 +1,87 @@
+fun point(x: int, y: int) -> List {
+    val result = List.new();
+    result.push(x);
+    result.push(y);
+    result
+}
+
+fun add(p: List, q: List) -> List {
+    val result = List.new();
+
+    val x = p.get(0) + q.get(0);
+    val y = p.get(1) + q.get(1);
+
+    result.push(x);
+    result.push(y);
+
+    result
+}
+
+fun parse_grid(input_string: List) -> Dict {
+    val result = Dict.new();
+
+    for y, line in input_string.lines() {
+        for x, c in line {
+            val key = point(x, y);
+            result.set_new(key, c); 
+        }
+    }
+
+
+    result
+}
+
+fun look_for(grid: Dict, string: List, initial: List, step: List) -> bool {
+    for expected in string {   
+        if !grid.has(initial) {
+            return false;
+        }
+
+        val actual = grid.get(initial);
+
+        if !(expected == actual) {
+            return false;
+        }
+
+
+        val old = initial;
+        initial = add(initial, step);
+    }
+
+    true
+}
+
+fun all_dirs_8() -> List {
+    val result = List.new();
+    result.push(point(1, 0));
+    result.push(point(1, 1));
+    result.push(point(0, 1));
+    result.push(point(-1, 1));
+    result.push(point(-1, 0));
+    result.push(point(-1, -1));
+    result.push(point(0, -1));
+    result.push(point(1, -1));
+
+    result
+}
+
+fun main() -> int {
+    val input_string: List = List.from_file("res/aoc/4.txt");
+    
+    val grid = parse_grid(input_string);
+
+    val steps = all_dirs_8();
+
+    val string = "XMAS";
+
+    val sum = 0;
+    for initial in grid.keys() {
+        for step in steps {
+            if look_for(grid, string, initial, step) {
+                sum = sum + 1;
+            }
+        }
+    }
+
+    sum
+}
