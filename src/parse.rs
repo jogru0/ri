@@ -3,7 +3,7 @@ use itertools::Itertools;
 use log::{debug, info};
 use std::hash::Hash;
 use std::iter::once;
-use std::ops::Neg;
+use std::ops::{Div, Neg};
 use std::path::{Path, PathBuf};
 use std::{
     cell::RefCell,
@@ -45,8 +45,8 @@ pub enum RuntimeError {
     WrongReturnType(Word, Ty, Ty),
     #[error("missing entry point (function '{}')", *MAIN)]
     NoEntryPoint,
-    #[error("index '{1}' out of bounds for list {0:?})")]
-    IndexOutOfBounds(Vec<HashableConstant>, IntConstant),
+    #[error("index '{1}' out of bounds for list {0})")]
+    IndexOutOfBounds(Constant, IntConstant),
     #[error("static function '{0}.{1}' not defined)")]
     StaticFunctionOnWrongType(Ty, InternalFun),
     #[error("operation '{0}' invalid on '{1:?}'")]
@@ -64,6 +64,8 @@ pub enum RuntimeError {
     //TODO Test if we now can call variables without evoke.
     #[error("cannot call '{0}'")]
     NotCallable(Constant),
+    #[error("cannot *exactly* divide '{0}' by '{1}'")]
+    DivisionNotExact(IntConstant, IntConstant),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -89,7 +91,7 @@ impl Neg for IntConstant {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PrimitiveConstant {
     Int(IntConstant),
     Bool(bool),
@@ -110,6 +112,16 @@ impl PrimitiveConstant {
             Self::Callable(_) => Ty::Callable,
         }
     }
+
+    fn deep_clone(self) -> PrimitiveConstant {
+        self
+    }
+}
+
+impl From<PrimitiveConstant> for Constant {
+    fn from(value: PrimitiveConstant) -> Self {
+        Constant::HashableConstant(HashableConstant::PrimitiveConstant(value))
+    }
 }
 
 impl HashableConstant {
@@ -117,6 +129,23 @@ impl HashableConstant {
         match self {
             HashableConstant::PrimitiveConstant(primitive_constant) => primitive_constant.ty(),
             HashableConstant::List(_) => Ty::List,
+        }
+    }
+
+    fn deep_clone(&self) -> HashableConstant {
+        match self {
+            HashableConstant::PrimitiveConstant(primitive_constant) => {
+                HashableConstant::PrimitiveConstant(primitive_constant.deep_clone())
+            }
+            HashableConstant::List(rc) => {
+                let clone = rc
+                    .borrow()
+                    .iter()
+                    .map(HashableConstant::deep_clone)
+                    .collect();
+
+                HashableConstant::List(Rc::new(RefCell::new(clone)))
+            }
         }
     }
 }
@@ -221,6 +250,23 @@ impl Constant {
             Constant::HashableConstant(hashable_constant) => hashable_constant.ty(),
         }
     }
+
+    fn deep_clone(&self) -> Self {
+        match self {
+            Constant::HashableConstant(hashable_constant) => {
+                Constant::HashableConstant(hashable_constant.deep_clone())
+            }
+            Constant::Dict(rc) => {
+                let clone = rc
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.deep_clone(), v.deep_clone()))
+                    .collect();
+
+                Constant::Dict(Rc::new(RefCell::new(clone)))
+            }
+        }
+    }
 }
 
 impl Display for IntConstant {
@@ -250,7 +296,22 @@ impl Display for HashableConstant {
         match self {
             Self::PrimitiveConstant(primitive_constant) => write!(f, "{primitive_constant}"),
             //TODO make it good
-            Self::List(vec) => write!(f, "{vec:?}"),
+            Self::List(vec) => {
+                let vec = &*vec.borrow();
+                if !vec.is_empty() && vec.iter().all(|hc| hc.ty() == Ty::Char) {
+                    write!(f, "\"")?;
+                    for elem in vec {
+                        write!(f, "{elem}")?;
+                    }
+                    write!(f, "\"")
+                } else {
+                    write!(f, "[")?;
+                    for elem in vec {
+                        write!(f, "{elem}, ")?; //TODO trailing comma
+                    }
+                    write!(f, "]")
+                }
+            }
         }
     }
 }
@@ -260,7 +321,13 @@ impl Display for Constant {
         match self {
             Self::HashableConstant(hashable_constant) => write!(f, "{hashable_constant}"),
             //TODO make it good
-            Self::Dict(index_map) => write!(f, "{index_map:?}"),
+            Self::Dict(index_map) => {
+                write!(f, "{{")?;
+                for (k, v) in &*index_map.borrow() {
+                    write!(f, "{k} -> {v}, ")?; //TODO trailing comma
+                }
+                write!(f, "}}")
+            }
         }
     }
 }
@@ -298,6 +365,23 @@ impl Mul for IntConstant {
         match (self, other) {
             (IntConstant::Small(lhs), IntConstant::Small(rhs)) => lhs
                 .checked_mul(rhs)
+                .ok_or(RuntimeError::NotImplememted("numbers beyond i128".into()))
+                .map(Self::Small),
+        }
+    }
+}
+
+impl Div for IntConstant {
+    type Output = Result<IntConstant, RuntimeError>;
+
+    fn div(self, other: Self) -> Self::Output {
+        if (self % other)? != Self::Small(0) {
+            return Err(RuntimeError::DivisionNotExact(self, other));
+        }
+
+        match (self, other) {
+            (IntConstant::Small(lhs), IntConstant::Small(rhs)) => lhs
+                .checked_div(rhs)
                 .ok_or(RuntimeError::NotImplememted("numbers beyond i128".into()))
                 .map(Self::Small),
         }
@@ -411,6 +495,7 @@ impl Display for Callable {
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub enum InternalFun {
     New,
+    Remove,
     Invoke,
     Debug,
     Push,
@@ -426,6 +511,7 @@ pub enum InternalFun {
     SetNew,
     Has,
     Keys,
+    DeepClone,
 }
 
 impl Display for InternalFun {
@@ -447,6 +533,8 @@ impl Display for InternalFun {
             InternalFun::SetNew => write!(f, "set_new"),
             InternalFun::Has => write!(f, "has"),
             InternalFun::Keys => write!(f, "keys"),
+            InternalFun::DeepClone => write!(f, "deep_clone"),
+            InternalFun::Remove => write!(f, "remove"),
         }
     }
 }
@@ -468,7 +556,9 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
         "invoke".try_into().expect("const") => InternalFun::Invoke,
         "set_new".try_into().expect("const") => InternalFun::SetNew,
         "has".try_into().expect("const") => InternalFun::Has,
+        "deep_clone".try_into().expect("const") => InternalFun::DeepClone,
         "keys".try_into().expect("const") => InternalFun::Keys,
+        "remove".try_into().expect("const") => InternalFun::Remove,
     }
 });
 
@@ -486,17 +576,17 @@ impl Block {
 
 #[derive(Debug, Clone)]
 pub struct Variables {
-    set: IndexMap<Word, Variable>,
+    map: IndexMap<Word, Variable>,
 }
 impl Variables {
     fn new() -> Self {
         Self {
-            set: IndexMap::new(),
+            map: IndexMap::new(),
         }
     }
 
     fn insert_new(&mut self, variable: Variable) -> Result<(), ParseError> {
-        match self.set.entry(variable.name.clone()) {
+        match self.map.entry(variable.name.clone()) {
             indexmap::map::Entry::Occupied(_) => {
                 Err(ParseError::AlreadyDefinedVariable(variable.name))
             }
@@ -508,7 +598,7 @@ impl Variables {
     }
 
     fn len(&self) -> usize {
-        self.set.len()
+        self.map.len()
     }
 }
 
@@ -651,6 +741,30 @@ impl Mul for Constant {
     }
 }
 
+impl Div for Constant {
+    type Output = Result<Constant, RuntimeError>;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        match (self, rhs) {
+            (
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(lhs),
+                )),
+                Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                    PrimitiveConstant::Int(rhs),
+                )),
+            ) => Ok(Constant::HashableConstant(
+                HashableConstant::PrimitiveConstant(PrimitiveConstant::Int((lhs / rhs)?)),
+            )),
+            (lhs, rhs) => Err(RuntimeError::InvalidBinaryOperation(
+                lhs,
+                BinaryOperator::Times,
+                rhs,
+            )),
+        }
+    }
+}
+
 impl Rem for Constant {
     type Output = Result<Constant, RuntimeError>;
 
@@ -729,6 +843,7 @@ fn combine_with_operator(
 ) -> Result<Constant, RuntimeError> {
     match op {
         BinaryOperator::Plus => lhs + rhs,
+        BinaryOperator::Division => lhs / rhs,
         BinaryOperator::Times => lhs * rhs,
         BinaryOperator::Minus => lhs - rhs,
         BinaryOperator::Smaller => lhs
@@ -944,6 +1059,7 @@ enum ModuleOrFun {
 pub enum BinaryOperator {
     Plus,
     Times,
+    Division,
     Minus,
     Smaller,
     Modulo,
@@ -965,6 +1081,7 @@ impl Display for BinaryOperator {
             BinaryOperator::And => write!(f, "&&"),
             BinaryOperator::Or => write!(f, "||"),
             BinaryOperator::Unequals => write!(f, "!="),
+            BinaryOperator::Division => write!(f, "/"),
         }
     }
 }
@@ -990,6 +1107,7 @@ impl BinaryOperator {
             BinaryOperator::And => Stickyness::Conjunction,
             BinaryOperator::Or => Stickyness::Disjunction,
             BinaryOperator::Unequals => Stickyness::Comparison,
+            BinaryOperator::Division => Stickyness::Multiplication,
         }
     }
 }
@@ -1372,7 +1490,7 @@ impl TokenStream<'_> {
         self.expect(Token::Arrow)?;
         let ty = self.expect_ty()?;
 
-        for variable in variables.set.keys() {
+        for variable in variables.map.keys() {
             //TODO Test error
             self.stack.push(variable.clone())?;
         }
@@ -1558,13 +1676,7 @@ impl Modules {
     ) -> Result<Constant, RuntimeError> {
         let fun = self.get_fun(fun_id);
 
-        debug!(
-            "calling {} ({} parameters) with stack size {} and old reference {}",
-            fun.name,
-            fun.variables.len(),
-            variable_values.values.len(),
-            variable_values.reference
-        );
+        debug!("calling {}, parameters:", fun.name);
 
         if fun.variables.len() != parameters.len() {
             return Err(RuntimeError::IncompatibleParameters(
@@ -1572,6 +1684,10 @@ impl Modules {
                 fun.variables.clone(),
                 fun.name.clone(),
             ));
+        }
+
+        for (value, name) in parameters.iter().zip(fun.variables.map.keys()) {
+            debug!("    {}: {}", name, value);
         }
 
         let old_reference = variable_values.reference;
@@ -1584,6 +1700,8 @@ impl Modules {
         let result = self
             .evaluate_block(&fun.body, variable_values)?
             .unwrap_on_outer_layer();
+
+        debug!("returning {} from {}", result, fun.name,);
 
         assert_eq!(
             variable_values.values.len() - variable_values.reference,
@@ -1883,12 +2001,15 @@ impl Modules {
                 )) = parameters.iter().collect_tuple()
                 {
                     let IntConstant::Small(id) = i;
-                    let id: usize = id
-                        .try_into()
-                        .map_err(|_| RuntimeError::IndexOutOfBounds(list.borrow().clone(), i))?;
+                    let id: usize = id.try_into().map_err(|_| {
+                        RuntimeError::IndexOutOfBounds(list.borrow().clone().into(), i)
+                    })?;
 
                     let Some(result) = list.borrow().get(id).cloned() else {
-                        return Err(RuntimeError::IndexOutOfBounds(list.borrow().clone(), i));
+                        return Err(RuntimeError::IndexOutOfBounds(
+                            list.borrow().clone().into(),
+                            i,
+                        ));
                     };
                     return Ok(result.into());
                 }
@@ -2080,6 +2201,22 @@ impl Modules {
             InternalFun::Keys => {
                 if let Some(Constant::Dict(dict)) = parameters.iter().collect_single() {
                     return Ok(dict.borrow().keys().cloned().collect_vec().into());
+                }
+            }
+            InternalFun::DeepClone => {
+                if let Some(c) = parameters.iter().collect_single() {
+                    return Ok(c.deep_clone());
+                }
+            }
+            InternalFun::Remove => {
+                if let Some((Constant::Dict(dict), Constant::HashableConstant(key))) =
+                    parameters.iter().collect_tuple()
+                {
+                    let Some((_, result)) = dict.borrow_mut().swap_remove_entry(key) else {
+                        return Err(RuntimeError::KeyDoesNotExist(key.clone()));
+                    };
+
+                    return Ok(result);
                 }
             }
         }
@@ -2664,6 +2801,7 @@ fn single_digit_to_token(c: char) -> Option<Token> {
         ',' => Some(Token::Comma),
         ';' => Some(Token::Semicolon),
         '+' => Some(Token::BinaryOperator(BinaryOperator::Plus)),
+        '/' => Some(Token::BinaryOperator(BinaryOperator::Division)),
         '-' => Some(Token::BinaryOperator(BinaryOperator::Minus)),
         '*' => Some(Token::BinaryOperator(BinaryOperator::Times)),
         '<' => Some(Token::BinaryOperator(BinaryOperator::Smaller)),

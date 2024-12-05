@@ -5,3 +5,178 @@ fun map(list: List, callable: Callable) -> List {
     }
     result
 }
+
+
+
+fun parse_digit(digit: char) -> List {
+    val result = List.new();
+
+    if digit == '0' {
+        result.push(0)
+    } else if digit == '1' {
+        result.push(1)
+    } else if digit == '2' {
+        result.push(2)
+    } else if digit == '3' {
+        result.push(3)
+    } else if digit == '4' {
+        result.push(4)
+    } else if digit == '5' {
+        result.push(5)
+    } else if digit == '6' {
+        result.push(6)
+    } else if digit == '7' {
+        result.push(7)
+    } else if digit == '8' {
+        result.push(8)
+    } else if digit == '9' {
+        result.push(9)
+    }
+
+    result 
+}
+
+fun parse_num(input_string: List, i_ref: List) -> List {
+    val i = i_ref.get(0);
+
+    val maybe_char = input_string.peek(i);
+    if maybe_char.len() == 0 {
+        return List.new();
+    }
+    
+    val c = maybe_char.get(0);
+    val digit = c.parse_digit();
+    if digit.len() != 1 {
+        return List.new();
+    }
+
+    val result = digit.get(0);
+
+    while true {
+        i = i + 1;
+
+        maybe_char = input_string.peek(i);
+        if maybe_char.len() == 0 {
+            i_ref.update_optional(i);
+            return optional(result);
+        }
+        
+        digit = maybe_char.get(0).parse_digit();
+        if digit.len() != 1 {
+            i_ref.update_optional(i);
+            return optional(result);
+        }
+
+        result = result * 10 + digit.get(0);
+    }
+}
+
+fun optional(i: int) -> List {
+    val result = List.new();
+    result.push(i);
+    result
+}
+
+fun update_optional(i_ref: List, i: int) -> int {
+    val res = i_ref.pop();
+    i_ref.push(i);
+    res
+}
+
+fun peek(input_string: List, i: int) -> List {
+    val result = List.new();
+    if i < input_string.len() {
+        result.push(input_string.get(i));
+    }
+    result
+}
+
+fun split_at(input_string: List, separator: char) -> List {
+    val result = List.new();
+    val current = List.new();
+
+    for c in input_string {
+        if c == separator {
+            result.push(current);
+            current = List.new();
+        } else {
+            current.push(c);
+        }
+    }
+    result.push(current);
+    result
+}
+
+fun insert_edge(graph: Dict, source: int, target: int) -> None {
+    if graph.has(source) {
+        val targets = graph.get(source);
+        targets.push(target);
+    } else {
+        val targets = List.new();
+        targets.push(target);
+        graph.set_new(source, targets);
+    }
+
+    if !graph.has(target) {
+        graph.set_new(target, List.new());
+    }
+}
+
+fun get_reachable(graph: Dict) -> Dict {
+    val reachable = Dict.new();
+    for source in graph.keys() {
+        for target in graph.get(source) {
+            if !reachable.has(target) {
+                reachable.set_new(target, None);
+            }
+        }
+    }
+    reachable
+}
+
+fun topologically_sorted(graph: Dict) -> List {
+    graph = graph.deep_clone();
+
+    val result = List.new();
+
+    while graph.keys().len() != 0 {
+        val reachable = graph.get_reachable();
+
+        val progress = false;
+        for key in graph.keys() {
+            if !reachable.has(key) {
+                graph.remove(key);
+                result.push(key);
+                progress = true;
+            }
+        }
+
+        if !progress {
+            0 / 0;
+        }
+    }
+
+    result
+}
+
+fun has_cycles(graph: Dict) -> bool {
+    graph = graph.deep_clone();
+
+    while graph.keys().len() != 0 {
+        val reachable = graph.get_reachable();
+
+        val progress = false;
+        for key in graph.keys() {
+            if !reachable.has(key) {
+                graph.remove(key);
+                progress = true;
+            }
+        }
+
+        if !progress {
+            return true;
+        }
+    }
+
+    false
+}

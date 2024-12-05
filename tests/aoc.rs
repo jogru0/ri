@@ -49,3 +49,13 @@ fn aoc4s() {
 fn aoc4g() {
     run("res/aoc/4g.ri", 2005);
 }
+
+#[test]
+fn aoc5s() {
+    run("res/aoc/5s.ri", 5064);
+}
+
+#[test]
+fn aoc5g() {
+    run("res/aoc/5g.ri", 5152);
+}

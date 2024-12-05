@@ -1,0 +1,68 @@
+import utils;
+
+fun parse_int(s: List) -> int {
+    s.parse(int)
+}
+
+fun main() -> int {
+    val input_string: List = List.from_file("res/aoc/5.txt");
+    val input_lines = input_string.lines();
+
+    val rules = List.new();
+
+    val line_id = 0;
+    while input_lines.get(line_id).len() != 0 {
+        val line = input_lines.get(line_id);
+
+        val i_ref = utils::optional(0);
+        val source =  line.utils::parse_num(i_ref).get(0);
+        i_ref.utils::update_optional(i_ref.get(0) + 1);
+        val target = line.utils::parse_num(i_ref).get(0);
+
+        val rule = List.new();
+        rule.push(source);
+        rule.push(target);
+        rules.push(rule);
+
+        line_id = line_id + 1;
+    }
+
+
+    line_id = line_id + 1;
+
+    val sum = 0;
+    while line_id < input_lines.len() {
+        val line = input_lines.get(line_id);
+        val numbers = line.utils::split_at(',').utils::map(parse_int);
+        
+        val graph = Dict.new();   
+        
+        val i = 0;
+        while i + 1 < numbers.len() {
+            graph.utils::insert_edge(numbers.get(i), numbers.get(i + 1));
+            i = i + 1;        
+        }
+
+        val numbers_dict = Dict.new();
+        for n in numbers {
+            numbers_dict.set_new(n, None);
+        }
+
+        for rule in rules {
+            val s = rule.get(0);
+            val t = rule.get(1);
+            if numbers_dict.has(s) && numbers_dict.has(t) {
+                graph.utils::insert_edge(s, t);
+            }
+        }
+
+        if !graph.utils::has_cycles() {
+            val middle = numbers.get((numbers.len() - 1) / 2);
+            sum = sum + middle;
+        }
+
+        line_id = line_id + 1;
+    }
+    
+    sum
+}
