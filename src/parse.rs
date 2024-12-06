@@ -92,7 +92,7 @@ impl Neg for IntConstant {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PrimitiveConstant {
     Int(IntConstant),
     Bool(bool),
@@ -114,8 +114,8 @@ impl PrimitiveConstant {
         }
     }
 
-    fn deep_clone(self) -> PrimitiveConstant {
-        self
+    fn deep_clone(&self) -> PrimitiveConstant {
+        self.clone()
     }
 }
 
