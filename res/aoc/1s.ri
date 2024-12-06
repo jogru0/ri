@@ -32,7 +32,7 @@ fun main() -> int {
     while i < length {
         sum = sum + abs(right.get(i) - left.get(i));
 
-        i = i+1;
+        i += 1;
     }
 
     sum

@@ -14,7 +14,7 @@ fun fib(n: int) -> int {
     val i: int = 2;
     while i < n + 1 {
         mem.push(mem.get(i - 1) + mem.get(i -2));
-        i = i + 1;
+        i += 1;
     }
 
      mem.pop()

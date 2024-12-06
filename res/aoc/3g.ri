@@ -55,7 +55,7 @@ fun parse_num(input_string: List, i_ref: List) -> List {
     val result = digit.get(0);
 
     while true {
-        i = i + 1;
+        i += 1;
 
         maybe_char = input_string.peek(i);
         if digit.len() == 0 {
@@ -153,7 +153,7 @@ fun main() -> int {
             sum = sum + parse_mul(input_string, i);
         }
 
-        i = i + 1;
+        i += 1;
     }
     sum
 }

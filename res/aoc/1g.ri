@@ -24,7 +24,7 @@ fun main() -> int {
             right.push(number_strings.get(i).parse(int));
         }
 
-        i = i + 1;
+        i += 1;
     }
 
     val sum = 0;
@@ -45,7 +45,7 @@ fun main() -> int {
             j = j + 1
         }
 
-        sum = sum + value * appaerances;
+        sum += value * appaerances;
 
         i = i+1;
     }

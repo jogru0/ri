@@ -64,7 +64,7 @@ fun main() -> int {
     val reports = List.new();
     while i < length {
         reports.push(report_strings.get(i).parse_numbers());
-        i = i + 1;
+        i += 1;
     }
 
     i = 0;
@@ -73,7 +73,7 @@ fun main() -> int {
         if is_valid_report(reports.get(i)) {
             sum = sum + 1;
         }
-        i = i + 1;
+        i += 1;
     }
 
     

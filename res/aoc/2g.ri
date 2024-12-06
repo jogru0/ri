@@ -7,7 +7,7 @@ fun parse_numbers(s: List) -> List {
     val length: int = number_strings.len();
     while i < length {
         numbers.push(number_strings.get(i).parse(int));
-        i = i + 1;
+        i += 1;
     }
     numbers
 }
@@ -75,7 +75,7 @@ fun is_valid_report_without(report: List, ex: int) -> bool {
     val found_inc = false;
     val found_dec = false;
 
-    i = i + 1;
+    i += 1;
 
     if ex + 1 == length {
         length = ex;
@@ -83,7 +83,7 @@ fun is_valid_report_without(report: List, ex: int) -> bool {
 
     while i < length {
         if i == ex {
-            i = i + 1;
+            i += 1;
         }
 
         val n: int = report.get(i);
@@ -130,7 +130,7 @@ fun main() -> int {
     val reports = List.new();
     while i < length {
         reports.push(parse_numbers(report_strings.get(i)));
-        i = i + 1;
+        i += 1;
     }
 
     i = 0;
@@ -139,7 +139,7 @@ fun main() -> int {
         if is_valid_report_generalized(reports.get(i)) {
             sum = sum + 1;
         }
-        i = i + 1;
+        i += 1;
     }
 
 
@@ -161,7 +161,7 @@ fun is_valid_report_generalized(report: List) -> bool {
         return true;
     }   
 
-        i = i + 1;
+        i += 1;
     }
 
     false

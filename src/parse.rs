@@ -20,7 +20,6 @@ use thiserror::Error;
 use word::Word;
 
 #[derive(Debug, Error)]
-
 //TODO: Nicer List printing
 pub enum RuntimeError {
     #[error("not (yet) implemented: {0}")]
@@ -1113,10 +1112,19 @@ impl BinaryOperator {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum FollowUp {
     BinaryOperator(BinaryOperator),
     End,
+    Callable(Expr),
+}
+impl FollowUp {
+    fn allow_assign(&self) -> bool {
+        match self {
+            FollowUp::BinaryOperator(_) | FollowUp::Callable(_) => true,
+            FollowUp::End => false,
+        }
+    }
 }
 
 struct Stack {
@@ -1300,6 +1308,11 @@ impl TokenStream<'_> {
                 self.next().expect("just peeked");
                 Ok(FollowUp::BinaryOperator(op))
             }
+            Some(Token::Word(name)) => {
+                self.next().expect("just peeked");
+                //TODO where to convert to ExprId
+                Ok(FollowUp::Callable(self.interpret_word(&name)?))
+            }
             None
             | Some(
                 Token::Semicolon
@@ -1418,6 +1431,26 @@ impl TokenStream<'_> {
 
         let mut ast = self.parse_non_binary()?;
         let mut follow_up = self.parse_follow_up()?;
+
+        if let Expr::Variable(variable_id) = ast {
+            if follow_up.allow_assign() && self.entertain(Token::Assign) {
+                let expr = self.parse_expr()?;
+                let (range, lhs, rhs) = self.expressions.add_two(ast, expr);
+                let expr = match follow_up {
+                    FollowUp::BinaryOperator(binary_operator) => {
+                        Expr::BinaryOp(lhs, binary_operator, rhs)
+                    }
+                    FollowUp::Callable(callable) => Expr::Call(Call {
+                        callable: self.expressions.add(callable),
+                        arguments: range,
+                    }),
+                    _ => unreachable!("allow_assign"),
+                };
+
+                let expr_id = self.expressions.add(expr);
+                return Ok(Expr::Assign(variable_id, expr_id));
+            }
+        }
 
         while let FollowUp::BinaryOperator(op) = follow_up {
             let (rhs, new_follow_up) = self.parse_until_stickyness(op.stickyness())?;
@@ -2382,6 +2415,19 @@ impl Expressions {
         self.vec.extend(exprs);
         let end = self.next_expr_id();
         ExprRange { start, end }
+    }
+
+    fn add_two(&mut self, lhs: Expr, rhs: Expr) -> (ExprRange, ExprId, ExprId) {
+        let first = self.add(lhs);
+        let second = self.add(rhs);
+        (
+            ExprRange {
+                start: first,
+                end: self.next_expr_id(),
+            },
+            first,
+            second,
+        )
     }
 }
 

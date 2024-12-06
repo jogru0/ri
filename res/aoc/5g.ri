@@ -24,11 +24,11 @@ fun main() -> int {
         rule.push(target);
         rules.push(rule);
 
-        line_id = line_id + 1;
+        line_id +=  1;
     }
 
 
-    line_id = line_id + 1;
+    line_id +=  1;
 
     val sum = 0;
     while line_id < input_lines.len() {
@@ -55,7 +55,7 @@ fun main() -> int {
         val i = 0;
         while i + 1 < numbers.len() {
             enriched_graph.utils::insert_edge(numbers.get(i), numbers.get(i + 1));
-            i = i + 1;        
+            i += 1;        
         }
 
         if enriched_graph.utils::has_cycles() {
@@ -64,7 +64,7 @@ fun main() -> int {
             sum = sum + middle;
         }
 
-        line_id = line_id + 1;
+        line_id +=  1;
     }
     
     sum

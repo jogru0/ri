@@ -57,3 +57,13 @@ fn ex6() {
 
     assert.success().code(0).stdout("Result: true\n");
 }
+
+#[test]
+fn ex7() {
+    let assert = run("res/examples/ex7.ri");
+
+    assert
+        .success()
+        .code(0)
+        .stdout("Result: [30, -1, 7, 6, (), 7, (), -1, (), ]\n");
+}

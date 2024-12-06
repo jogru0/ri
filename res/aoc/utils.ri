@@ -53,7 +53,7 @@ fun parse_num(input_string: List, i_ref: List) -> List {
     val result = digit.get(0);
 
     while true {
-        i = i + 1;
+        i += 1;
 
         maybe_char = input_string.peek(i);
         if maybe_char.len() == 0 {
