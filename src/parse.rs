@@ -5,6 +5,8 @@ use std::hash::Hash;
 use std::iter::once;
 use std::ops::{Div, Neg};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
+use std::time::Instant;
 use std::{
     cell::RefCell,
     cmp::Ordering,
@@ -1675,6 +1677,21 @@ pub struct Modules {
     entry_point: Option<FunId>,
 }
 
+//TODO
+fn _timed<F, Res>(atomic: &AtomicU64, fun: F) -> Res
+where
+    F: FnOnce() -> Res,
+{
+    let s = Instant::now();
+    let res = fun();
+    let e = Instant::now();
+
+    let dur = (e - s).as_nanos() as u64;
+    atomic.fetch_add(dur, std::sync::atomic::Ordering::Relaxed);
+
+    res
+}
+
 impl Modules {
     fn new(modules: Vec<Module>, expressions: Expressions, entry_point: Option<FunId>) -> Self {
         Self {
@@ -1811,183 +1828,280 @@ impl Modules {
         Ok(res)
     }
 
+    fn evaluate_constant(&self, constant: Constant) -> Evaluation {
+        constant.into()
+    }
+
+    fn evaluate_variable(
+        &self,
+        variable_id: &VariableId,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        Ok(variable_values.get(variable_id)?.into())
+    }
+
+    fn evaluate_binary_op(
+        &self,
+        lhs_expr: &ExprId,
+        op: &BinaryOperator,
+        rhs_expr: &ExprId,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        let lhs = self.evaluate_expr(*lhs_expr, variable_values)?;
+        let Some(lhs) = lhs.some_or_please_return() else {
+            return Ok(lhs);
+        };
+
+        // Short circuiting
+        if op == &BinaryOperator::And && !lhs.get_bool()? {
+            let res: Constant = false.into();
+            return Ok(res.into());
+        }
+
+        if op == &BinaryOperator::Or && lhs.get_bool()? {
+            let res: Constant = true.into();
+            return Ok(res.into());
+        }
+
+        let rhs = self.evaluate_expr(*rhs_expr, variable_values)?;
+        let Some(rhs) = rhs.some_or_please_return() else {
+            return Ok(rhs);
+        };
+
+        let combined = combine_with_operator(lhs.clone(), *op, rhs.clone());
+
+        Ok(combined?.into())
+    }
+
+    fn evaluate_return(
+        &self,
+        expr: &ExprId,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        self.evaluate_expr(*expr, variable_values)
+            .map(|evaluation| evaluation.returning())
+    }
+
+    fn evaluate_if(
+        &self,
+        expr: &ExprId,
+        if_block: &Block,
+        else_expr: &ExprId,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        let eval = self.evaluate_expr(*expr, variable_values)?;
+        let Some(constant) = eval.some_or_please_return() else {
+            return Ok(eval);
+        };
+
+        let b = constant.get_bool()?;
+
+        if b {
+            self.evaluate_block(if_block, variable_values)
+        } else {
+            self.evaluate_expr(*else_expr, variable_values)
+        }
+    }
+
+    fn evaluate_call(
+        &self,
+        call: &Call,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        let callable = self.evaluate_expr(call.callable, variable_values)?;
+        let Some(callable) = callable.some_or_please_return() else {
+            return Ok(callable);
+        };
+
+        let &Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+            PrimitiveConstant::Callable(callable),
+        )) = callable
+        else {
+            return Err(RuntimeError::NotCallable(callable.clone()));
+        };
+
+        let mut parameters = Vec::new();
+        for id in call.arguments.start.0..call.arguments.end.0 {
+            let eval = self.evaluate_expr(ExprId(id), variable_values)?;
+            let Some(parameter) = eval.some_or_please_return() else {
+                return Ok(eval);
+            };
+
+            parameters.push(parameter.clone());
+        }
+
+        self.call(callable, parameters, variable_values)
+            .map(|c| c.into())
+    }
+
+    fn evaluate_assign(
+        &self,
+        variable_id: &VariableId,
+        expr_id: &ExprId,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        let eval = self.evaluate_expr(*expr_id, variable_values)?;
+        let Some(eval) = eval.some_or_please_return() else {
+            return Ok(eval);
+        };
+        variable_values.set(*variable_id, eval.clone())?;
+        Ok(Constant::default().into())
+    }
+
+    //TODO: Can we combine with assign?
+    fn evaluate_introduce(
+        &self,
+        variable_id: &VariableId,
+        expr_id: &ExprId,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        //SYNC(INTRO_AFTER_EVAL) Variable gets introduced after evaluating its initial value.
+        let eval = self.evaluate_expr(*expr_id, variable_values)?;
+        let Some(eval) = eval.some_or_please_return() else {
+            return Ok(eval);
+        };
+        variable_values.introduce(*variable_id, eval.clone());
+        Ok(Constant::default().into())
+    }
+
+    fn evaluate_while(
+        &self,
+        expr_id: &ExprId,
+        block: &Block,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        loop {
+            let eval = self.evaluate_expr(*expr_id, variable_values)?;
+            let Some(constant) = eval.some_or_please_return() else {
+                return Ok(eval);
+            };
+
+            let b = constant.get_bool()?;
+
+            if !b {
+                return Ok(Constant::default().into());
+            }
+
+            let block_result = self.evaluate_block(block, variable_values)?;
+            let Some(_) = block_result.some_or_please_return() else {
+                return Ok(block_result);
+            };
+        }
+    }
+
+    fn evaluate_for(
+        &self,
+        var0: &VariableId,
+        var1: &Option<VariableId>,
+        iterable: &ExprId,
+        block: &Block,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        let iterable = self.evaluate_expr(*iterable, variable_values)?;
+        let Some(iterable) = iterable.some_or_please_return() else {
+            return Ok(iterable);
+        };
+
+        let iter = match iterable {
+            Constant::HashableConstant(HashableConstant::List(rc)) => rc.borrow().clone(),
+            _ => return Err(RuntimeError::NotIterable(iterable.clone())),
+        };
+
+        match var1 {
+            Some(var1) => {
+                for (i, c) in iter.into_iter().enumerate() {
+                    variable_values.introduce(*var0, (i as i128).into());
+                    variable_values.introduce(*var1, c.into());
+
+                    let eval = self.evaluate_block(block, variable_values)?;
+
+                    variable_values.values.pop();
+                    variable_values.values.pop();
+
+                    let Some(_) = eval.some_or_please_return() else {
+                        return Ok(eval);
+                    };
+                }
+            }
+            None => {
+                for c in iter.into_iter() {
+                    variable_values.introduce(*var0, c.into());
+
+                    let eval = self.evaluate_block(block, variable_values)?;
+
+                    variable_values.values.pop();
+
+                    let Some(_) = eval.some_or_please_return() else {
+                        return Ok(eval);
+                    };
+                }
+            }
+        }
+
+        Ok(Constant::default().into())
+    }
+
+    fn evaluate_negate(
+        &self,
+        expr_id: &ExprId,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        let inner_value = self.evaluate_expr(*expr_id, variable_values)?;
+        let Some(inner_value) = inner_value.some_or_please_return() else {
+            return Ok(inner_value);
+        };
+
+        let value: Constant = (!inner_value.get_bool()?).into();
+        Ok(value.into())
+    }
+
+    fn evaluate_minus(
+        &self,
+        expr_id: &ExprId,
+        variable_values: &mut VariableValues,
+    ) -> Result<Evaluation, RuntimeError> {
+        let inner_value = self.evaluate_expr(*expr_id, variable_values)?;
+        let Some(inner_value) = inner_value.some_or_please_return() else {
+            return Ok(inner_value);
+        };
+
+        let value: Constant = (-inner_value.get_int()?).into();
+        Ok(value.into())
+    }
+
     fn evaluate_expr(
         &self,
         expr_id: ExprId,
         variable_values: &mut VariableValues,
     ) -> Result<Evaluation, RuntimeError> {
         match self.expressions.get(expr_id) {
-            Expr::Constant(int_constant) => Ok((int_constant.clone()).into()),
-            Expr::Variable(variable_id) => Ok(variable_values.get(variable_id)?.into()),
+            Expr::Constant(constant) => Ok(self.evaluate_constant(constant.clone())),
+            Expr::Variable(variable_id) => self.evaluate_variable(variable_id, variable_values),
             Expr::BinaryOp(lhs_expr, op, rhs_expr) => {
-                let lhs = self.evaluate_expr(*lhs_expr, variable_values)?;
-                let Some(lhs) = lhs.some_or_please_return() else {
-                    return Ok(lhs);
-                };
-
-                // Short circuiting
-                if op == &BinaryOperator::And && !lhs.get_bool()? {
-                    let res: Constant = false.into();
-                    return Ok(res.into());
-                }
-
-                if op == &BinaryOperator::Or && lhs.get_bool()? {
-                    let res: Constant = true.into();
-                    return Ok(res.into());
-                }
-
-                let rhs = self.evaluate_expr(*rhs_expr, variable_values)?;
-                let Some(rhs) = rhs.some_or_please_return() else {
-                    return Ok(rhs);
-                };
-
-                Ok(combine_with_operator(lhs.clone(), *op, rhs.clone())?.into())
+                self.evaluate_binary_op(lhs_expr, op, rhs_expr, variable_values)
             }
             Expr::Block(block) => self.evaluate_block(block, variable_values),
-            Expr::Return(expr) => self
-                .evaluate_expr(*expr, variable_values)
-                .map(|evaluation| evaluation.returning()),
+            Expr::Return(expr) => self.evaluate_return(expr, variable_values),
             Expr::If(expr, if_block, else_expr) => {
-                let eval = self.evaluate_expr(*expr, variable_values)?;
-                let Some(constant) = eval.some_or_please_return() else {
-                    return Ok(eval);
-                };
-
-                let b = constant.get_bool()?;
-
-                if b {
-                    self.evaluate_block(if_block, variable_values)
-                } else {
-                    self.evaluate_expr(*else_expr, variable_values)
-                }
+                self.evaluate_if(expr, if_block, else_expr, variable_values)
             }
-            Expr::Call(call) => {
-                let callable = self.evaluate_expr(call.callable, variable_values)?;
-                let Some(callable) = callable.some_or_please_return() else {
-                    return Ok(callable);
-                };
-
-                let &Constant::HashableConstant(HashableConstant::PrimitiveConstant(
-                    PrimitiveConstant::Callable(callable),
-                )) = callable
-                else {
-                    return Err(RuntimeError::NotCallable(callable.clone()));
-                };
-
-                let mut parameters = Vec::new();
-                for id in call.arguments.start.0..call.arguments.end.0 {
-                    let eval = self.evaluate_expr(ExprId(id), variable_values)?;
-                    let Some(parameter) = eval.some_or_please_return() else {
-                        return Ok(eval);
-                    };
-
-                    parameters.push(parameter.clone());
-                }
-
-                self.evaluate_call(callable, parameters, variable_values)
-                    .map(|c| c.into())
-            }
+            Expr::Call(call) => self.evaluate_call(call, variable_values),
             Expr::Assign(variable_id, expr_id) => {
-                let eval = self.evaluate_expr(*expr_id, variable_values)?;
-                let Some(eval) = eval.some_or_please_return() else {
-                    return Ok(eval);
-                };
-                variable_values.set(*variable_id, eval.clone())?;
-                Ok(Constant::default().into())
+                self.evaluate_assign(variable_id, expr_id, variable_values)
             }
             Expr::Introduce(variable_id, expr_id) => {
-                //SYNC(INTRO_AFTER_EVAL) Variable gets introduced after evaluating its initial value.
-                let eval = self.evaluate_expr(*expr_id, variable_values)?;
-                let Some(eval) = eval.some_or_please_return() else {
-                    return Ok(eval);
-                };
-                variable_values.introduce(*variable_id, eval.clone());
-
-                Ok(Constant::default().into())
+                self.evaluate_introduce(variable_id, expr_id, variable_values)
             }
-            Expr::While(expr_id, block) => loop {
-                let eval = self.evaluate_expr(*expr_id, variable_values)?;
-                let Some(constant) = eval.some_or_please_return() else {
-                    return Ok(eval);
-                };
-
-                let b = constant.get_bool()?;
-
-                if !b {
-                    return Ok(Constant::default().into());
-                }
-
-                let block_result = self.evaluate_block(block, variable_values)?;
-                let Some(_) = block_result.some_or_please_return() else {
-                    return Ok(block_result);
-                };
-            },
+            Expr::While(expr_id, block) => self.evaluate_while(expr_id, block, variable_values),
             Expr::For(var0, var1, iterable, block) => {
-                let iterable = self.evaluate_expr(*iterable, variable_values)?;
-                let Some(iterable) = iterable.some_or_please_return() else {
-                    return Ok(iterable);
-                };
-
-                let iter = match iterable {
-                    Constant::HashableConstant(HashableConstant::List(rc)) => rc.borrow().clone(),
-                    _ => return Err(RuntimeError::NotIterable(iterable.clone())),
-                };
-
-                match var1 {
-                    Some(var1) => {
-                        for (i, c) in iter.into_iter().enumerate() {
-                            variable_values.introduce(*var0, (i as i128).into());
-                            variable_values.introduce(*var1, c.into());
-
-                            let eval = self.evaluate_block(block, variable_values)?;
-
-                            variable_values.values.pop();
-                            variable_values.values.pop();
-
-                            let Some(_) = eval.some_or_please_return() else {
-                                return Ok(eval);
-                            };
-                        }
-                    }
-                    None => {
-                        for c in iter.into_iter() {
-                            variable_values.introduce(*var0, c.into());
-
-                            let eval = self.evaluate_block(block, variable_values)?;
-
-                            variable_values.values.pop();
-
-                            let Some(_) = eval.some_or_please_return() else {
-                                return Ok(eval);
-                            };
-                        }
-                    }
-                }
-
-                Ok(Constant::default().into())
+                self.evaluate_for(var0, var1, iterable, block, variable_values)
             }
-            Expr::Negate(expr_id) => {
-                let inner_value = self.evaluate_expr(*expr_id, variable_values)?;
-                let Some(inner_value) = inner_value.some_or_please_return() else {
-                    return Ok(inner_value);
-                };
-
-                let value: Constant = (!inner_value.get_bool()?).into();
-                Ok(value.into())
-            }
-            Expr::Minus(expr_id) => {
-                let inner_value = self.evaluate_expr(*expr_id, variable_values)?;
-                let Some(inner_value) = inner_value.some_or_please_return() else {
-                    return Ok(inner_value);
-                };
-
-                let value: Constant = (-inner_value.get_int()?).into();
-                Ok(value.into())
-            }
+            Expr::Negate(expr_id) => self.evaluate_negate(expr_id, variable_values),
+            Expr::Minus(expr_id) => self.evaluate_minus(expr_id, variable_values),
         }
     }
 
-    fn evaluate_call(
+    fn call(
         &self,
         callable: Callable,
         parameters: Vec<Constant>,
@@ -2211,11 +2325,7 @@ impl Modules {
                 ))) = params_iter.next()
                 {
                     //TODO Collect meh
-                    return self.evaluate_call(
-                        callable,
-                        params_iter.cloned().collect(),
-                        variable_values,
-                    );
+                    return self.call(callable, params_iter.cloned().collect(), variable_values);
                 }
             }
             InternalFun::SetNew => {

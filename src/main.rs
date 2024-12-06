@@ -38,7 +38,6 @@ fn main() -> Result<(), MainError> {
     let modules = Modules::from_entry_file(Path::new(path))?;
 
     let result = modules.evaluate_main()?;
-
     println!("Result: {result}");
 
     Ok(())
