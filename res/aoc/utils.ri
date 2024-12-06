@@ -71,7 +71,7 @@ fun parse_num(input_string: List, i_ref: List) -> List {
     }
 }
 
-fun optional(i: int) -> List {
+fun optional(i: any) -> List {
     val result = List.new();
     result.push(i);
     result
@@ -152,31 +152,25 @@ fun topologically_sorted(graph: Dict) -> List {
         }
 
         if !progress {
-            0 / 0;
+            return List.new();
         }
     }
 
-    result
+    optional(result)
+}
+
+fun is_none(list: List) -> bool {
+    list.len() == 0
+}
+
+fun get_some(list: List) -> any {
+    if list.len() != 1 {
+        0 / 0
+    }
+
+    list.get(0)
 }
 
 fun has_cycles(graph: Dict) -> bool {
-    graph = graph.deep_clone();
-
-    while graph.keys().len() != 0 {
-        val reachable = graph.get_reachable();
-
-        val progress = false;
-        for key in graph.keys() {
-            if !reachable.has(key) {
-                graph.remove(key);
-                progress = true;
-            }
-        }
-
-        if !progress {
-            return true;
-        }
-    }
-
-    false
+    graph.topologically_sorted().is_none()
 }

@@ -59,7 +59,7 @@ fun main() -> int {
         }
 
         if enriched_graph.utils::has_cycles() {
-            val orderd_numbers = graph.utils::topologically_sorted(); 
+            val orderd_numbers = graph.utils::topologically_sorted().utils::get_some(); 
             val middle = orderd_numbers.get((numbers.len() - 1) / 2);
             sum = sum + middle;
         }

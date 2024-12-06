@@ -78,9 +78,6 @@ fun parse_num(input_string: List, i_ref: List) -> List {
 
         result = result * 10 + digit.get(0);
     }
-
-
-    
 }
 
 fun parse_mul(input_string: List, i: int) -> int {

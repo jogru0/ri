@@ -29,6 +29,7 @@ pub enum RuntimeError {
     #[error("unknown variable '{0:?}'")]
     UnknownVariable(VariableId),
     #[error("for function '{2}': arguments '{0:?}' incompatible with parameters '{1:?}'")]
+    //TODO very hard to read variables debug print
     IncompatibleParameters(Vec<Ty>, Variables, Word),
     #[error("arguments '{0:?}' incompatible with internal function {1}")]
     IncompatibleParametersForInternal(Vec<Ty>, InternalFun),
@@ -42,7 +43,7 @@ pub enum RuntimeError {
     #[error("invalid operation:'{0} {1} {2}'")]
     InvalidBinaryOperation(Constant, BinaryOperator, Constant),
     #[error("function '{0}' has return type '{1}', but evaluated to '{2}'")]
-    WrongReturnType(Word, Ty, Ty),
+    WrongReturnType(Word, GeneralTy, Ty),
     #[error("missing entry point (function '{}')", *MAIN)]
     NoEntryPoint,
     #[error("index '{1}' out of bounds for list {0})")]
@@ -1257,7 +1258,10 @@ impl TokenStream<'_> {
                 let inner_expr = self.parse_non_binary()?;
                 Expr::Minus(self.expressions.add(inner_expr))
             }
-            Token::Ty(ty) => Expr::Constant(ty.into()),
+            Token::GeneralTy(ty) => {
+                let ty: Ty = ty.try_into()?;
+                Expr::Constant(ty.into())
+            }
             Token::Return => {
                 let expr = self.parse_expr()?;
 
@@ -1502,9 +1506,9 @@ impl TokenStream<'_> {
         Ok(Fun::new(name, variables, ty, body))
     }
 
-    fn expect_ty(&mut self) -> Result<Ty, ParseError> {
+    fn expect_ty(&mut self) -> Result<GeneralTy, ParseError> {
         match self.next()? {
-            Token::Ty(word) => Ok(word),
+            Token::GeneralTy(word) => Ok(word),
             token => Err(ParseError::UnexpectedToken(token, "expected a type".into())),
         }
     }
@@ -1678,7 +1682,14 @@ impl Modules {
 
         debug!("calling {}, parameters:", fun.name);
 
-        if fun.variables.len() != parameters.len() {
+        if fun.variables.len() != parameters.len()
+            || !fun
+                .variables
+                .map
+                .iter()
+                .zip(parameters.iter())
+                .all(|((_, variable), constant)| constant.ty().satisfies(variable.general_ty))
+        {
             return Err(RuntimeError::IncompatibleParameters(
                 parameters.iter().map(|c| c.ty()).collect(),
                 fun.variables.clone(),
@@ -1709,7 +1720,7 @@ impl Modules {
         );
 
         //TODO: Check when parsing fun
-        if result.ty() != fun.ty {
+        if !result.ty().satisfies(fun.ty) {
             return Err(RuntimeError::WrongReturnType(
                 fun.name.clone(),
                 fun.ty,
@@ -2455,7 +2466,7 @@ pub fn evaluate_debug(
         },
     };
 
-    let main = Fun::new(name.clone(), Variables::new(), ty, block);
+    let main = Fun::new(name.clone(), Variables::new(), GeneralTy::Ty(ty), block);
 
     let main_id = FunId::new(ModuleId(0), 0);
 
@@ -2499,11 +2510,11 @@ fn str_to_list(s: &str) -> Vec<HashableConstant> {
 pub struct Fun {
     name: Word,
     variables: Variables,
-    ty: Ty,
+    ty: GeneralTy,
     body: Block,
 }
 impl Fun {
-    fn new(name: Word, variables: Variables, ty: Ty, body: Block) -> Self {
+    fn new(name: Word, variables: Variables, ty: GeneralTy, body: Block) -> Self {
         Self {
             name,
             variables,
@@ -2516,11 +2527,11 @@ impl Fun {
 #[derive(Eq, Clone, Hash, PartialEq, Debug)]
 struct Variable {
     name: Word,
-    ty: Ty,
+    general_ty: GeneralTy,
 }
 impl Variable {
-    fn new(name: Word, ty: Ty) -> Self {
-        Self { name, ty }
+    fn new(name: Word, general_ty: GeneralTy) -> Self {
+        Self { name, general_ty }
     }
 }
 
@@ -2826,15 +2837,15 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
     } else if keyword == "return" {
         Some(Token::Return)
     } else if keyword == "List" {
-        Some(Token::Ty(Ty::List))
+        Some(Token::GeneralTy(GeneralTy::Ty(Ty::List)))
     } else if keyword == "Dict" {
-        Some(Token::Ty(Ty::Dict))
+        Some(Token::GeneralTy(GeneralTy::Ty(Ty::Dict)))
     } else if keyword == "Range" {
-        Some(Token::Ty(Ty::Range))
+        Some(Token::GeneralTy(GeneralTy::Ty(Ty::Range)))
     } else if keyword == "int" {
-        Some(Token::Ty(Ty::Int))
+        Some(Token::GeneralTy(GeneralTy::Ty(Ty::Int)))
     } else if keyword == "None" {
-        Some(Token::Ty(Ty::None))
+        Some(Token::GeneralTy(GeneralTy::Ty(Ty::None)))
     } else if keyword == "import" {
         Some(Token::Import)
     } else if keyword == "if" {
@@ -2852,11 +2863,13 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
     } else if keyword == "val" {
         Some(Token::Val)
     } else if keyword == "bool" {
-        Some(Token::Ty(Ty::Bool))
+        Some(Token::GeneralTy(GeneralTy::Ty(Ty::Bool)))
+    } else if keyword == "any" {
+        Some(Token::GeneralTy(GeneralTy::Any))
     } else if keyword == "char" {
-        Some(Token::Ty(Ty::Char))
+        Some(Token::GeneralTy(GeneralTy::Ty(Ty::Char)))
     } else if keyword == "Callable" {
-        Some(Token::Ty(Ty::Callable))
+        Some(Token::GeneralTy(GeneralTy::Ty(Ty::Callable)))
     } else if keyword == "true" {
         Some(Token::Literal(true.into()))
     } else if keyword == "false" {
@@ -2932,6 +2945,30 @@ pub enum Ty {
     Char,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+pub enum GeneralTy {
+    Ty(Ty),
+    Any,
+}
+
+impl Display for GeneralTy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GeneralTy::Ty(ty) => write!(f, "{ty}"),
+            GeneralTy::Any => write!(f, "any"),
+        }
+    }
+}
+
+impl Ty {
+    fn satisfies(self, other: GeneralTy) -> bool {
+        match (self, other) {
+            (_, GeneralTy::Any) => true,
+            (lhs, GeneralTy::Ty(rhs)) => lhs == rhs,
+        }
+    }
+}
+
 impl Display for Ty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -2948,13 +2985,24 @@ impl Display for Ty {
     }
 }
 
+impl TryFrom<GeneralTy> for Ty {
+    type Error = ParseError;
+
+    fn try_from(value: GeneralTy) -> Result<Self, Self::Error> {
+        match value {
+            GeneralTy::Ty(ty) => Ok(ty),
+            GeneralTy::Any => todo!(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Token {
     Return,
     Else,
     Import,
     DoubleColon,
-    Ty(Ty),
+    GeneralTy(GeneralTy),
     Word(Word),
     Literal(Constant),
     BinaryOperator(BinaryOperator),
@@ -2984,7 +3032,7 @@ impl Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Token::Return => write!(f, "return"),
-            Token::Ty(ty) => write!(f, "{ty}"),
+            Token::GeneralTy(ty) => write!(f, "{ty}"),
             Token::Word(word) => write!(f, "{word}"),
             Token::Literal(int_constant) => write!(f, "{int_constant}"),
             Token::BinaryOperator(binary_operator) => write!(f, "{binary_operator}"),
