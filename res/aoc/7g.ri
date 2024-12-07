@@ -1,0 +1,86 @@
+import utils;
+
+fun digits_of(value: int) -> int {
+    if value == 0 {
+        return 1;
+    }
+    
+    val res = 0;
+    while 0 < value {
+        value -= value % 10;
+        value /= 10;
+        res += 1;
+    } 
+    res
+}
+
+fun calculate(problem: List, possibility: int, max: int) -> int {
+    val id = 1;
+    val end = problem.len();
+    val current = problem.get(id);
+    while id + 1 != problem.len() {
+        val next = problem.get(id + 1); 
+
+        val choice = possibility % 3;
+        if choice == 0 {
+            current += next;
+        } else if choice == 1 {
+            current *= next;
+        } else {
+            val d = digits_of(next);
+            val factor = 10.utils::pow(d);
+            current *= factor;
+            current += next;
+        }
+
+        if max < current {
+            return -1;
+        }
+
+        possibility -= choice;
+        possibility /= 3;
+
+        id += 1;
+    }
+
+    current
+}
+
+fun solve(problem: List) -> int {
+    val goal = problem.get(0);
+
+    val number_numbers = problem.len() - 1;
+    val possibilities = 3.utils::pow(number_numbers - 1);
+
+    val possibility = 0;
+    while possibility < possibilities {
+        if  calculate(problem, possibility, goal) == goal {
+            return goal;
+        }
+        possibility += 1;
+    }
+
+    0
+}
+
+fun parse_int(s: List) -> int {
+    s.parse(int)
+}
+
+
+fun main() -> int {
+    val input_string: List = List.from_file("res/aoc/7.txt");
+    
+    val inputs = List.new();
+    for line in input_string.lines() {
+        val numbers = line.split_whitespace();
+        numbers.get(0).pop();
+        inputs.push(numbers.utils::map(parse_int));
+    }
+
+    val sum = 0;
+    for i, problem in inputs {
+        sum += solve(problem);
+    }
+    sum
+}

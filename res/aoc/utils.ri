@@ -216,3 +216,12 @@ fun rotate_cw(p: List) -> List {
     result.push(p.get(0));
     result
 }
+
+fun pow(base: int, exp: int) -> int {
+    val res = 1;
+    while 0 < exp {
+        exp -= 1;
+        res *= base;
+    }
+    res
+}

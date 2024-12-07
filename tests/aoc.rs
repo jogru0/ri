@@ -70,3 +70,14 @@ fn aoc6s() {
 fn aoc6g() {
     run("res/aoc/6g.ri", 2262);
 }
+
+#[test]
+fn aoc7s() {
+    run("res/aoc/7s.ri", 2437272016585);
+}
+
+#[test]
+#[ignore = "slow"]
+fn aoc7g() {
+    run("res/aoc/7g.ri", 162987117690649);
+}
