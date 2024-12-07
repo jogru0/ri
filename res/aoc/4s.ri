@@ -1,3 +1,5 @@
+import utils;
+
 fun point(x: int, y: int) -> List {
     val result = List.new();
     result.push(x);
@@ -13,20 +15,6 @@ fun add(p: List, q: List) -> List {
 
     result.push(x);
     result.push(y);
-
-    result
-}
-
-fun parse_grid(input_string: List) -> Dict {
-    val result = Dict.new();
-
-    for y, line in input_string.lines() {
-        for x, c in line {
-            val key = point(x, y);
-            result.set_new(key, c); 
-        }
-    }
-
 
     result
 }
@@ -68,7 +56,7 @@ fun all_dirs_8() -> List {
 fun main() -> int {
     val input_string: List = List.from_file("res/aoc/4.txt");
     
-    val grid = parse_grid(input_string);
+    val grid = utils::parse_grid(input_string);
 
     val steps = all_dirs_8();
 

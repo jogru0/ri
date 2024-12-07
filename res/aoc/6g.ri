@@ -1,0 +1,66 @@
+import utils;
+
+fun guard_pos(grid: Dict) -> List {
+    for pos in grid.keys() {
+        if grid.get(pos) == '^' {
+            return pos
+        }
+    }
+
+    0 / 0
+}
+
+fun causes_loop(grid: Dict, new_blocked: List, pos: List, dir: List) -> bool {
+    val visited = Dict.new();
+
+    
+    while true {
+
+        val pos_dir = List.new();
+        pos_dir.push(pos);
+        pos_dir.push(dir);
+        if !visited.has(pos_dir) {
+            visited.set_new(pos_dir, None);
+        } else {
+            return true;
+        }
+
+        val new_pos = pos.utils::add_point(dir);
+
+        if !grid.has(new_pos) {
+            return false;
+        }
+        
+        if grid.get(new_pos) == '#' || new_pos == new_blocked {
+            dir = dir.utils::rotate_cw();
+        } else {
+            pos = new_pos;
+        }
+    } 
+}
+
+fun main() -> int {
+    val input_string: List = List.from_file("res/aoc/6.txt");
+    
+    val grid = utils::parse_grid(input_string);
+
+    val pos = grid.guard_pos();
+    val dir = utils::point(0, -1);
+
+    val new_blocked_list = List.new();
+    for key in grid.keys() {
+        if grid.get(key) == '.' {
+            new_blocked_list.push(key);
+        }
+    }
+
+    new_blocked_list.len().debug();
+    val sum = 0;
+    for i, new_blocked in new_blocked_list {
+        if grid.causes_loop(new_blocked, pos, dir) {
+            sum += 1;
+        }
+        i.debug();
+    }
+    sum
+}

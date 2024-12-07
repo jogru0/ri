@@ -174,3 +174,45 @@ fun get_some(list: List) -> any {
 fun has_cycles(graph: Dict) -> bool {
     graph.topologically_sorted().is_none()
 }
+
+fun parse_grid(input_string: List) -> Dict {
+    val result = Dict.new();
+
+    for y, line in input_string.lines() {
+        for x, c in line {
+            val key = point(x, y);
+            result.set_new(key, c); 
+        }
+    }
+
+
+    result
+}
+
+//TODO replace duplicates in old solutions
+fun point(x: int, y: int) -> List {
+    val result = List.new();
+    result.push(x);
+    result.push(y);
+    result
+}
+
+//TODO replace duplicates (add) in old solutions
+fun add_point(p: List, q: List) -> List {
+    val result = List.new();
+
+    val x = p.get(0) + q.get(0);
+    val y = p.get(1) + q.get(1);
+
+    result.push(x);
+    result.push(y);
+
+    result
+}
+
+fun rotate_cw(p: List) -> List {
+    val result = List.new();
+    result.push(-p.get(1));
+    result.push(p.get(0));
+    result
+}

@@ -59,3 +59,14 @@ fn aoc5s() {
 fn aoc5g() {
     run("res/aoc/5g.ri", 5152);
 }
+
+#[test]
+fn aoc6s() {
+    run("res/aoc/6s.ri", 5534);
+}
+
+#[test]
+#[ignore = "slow"]
+fn aoc6g() {
+    run("res/aoc/6g.ri", 2262);
+}

@@ -1,0 +1,41 @@
+import utils;
+
+fun guard_pos(grid: Dict) -> List {
+    for pos in grid.keys() {
+        if grid.get(pos) == '^' {
+            return pos
+        }
+    }
+
+    0 / 0
+}
+
+fun main() -> int {
+    val input_string: List = List.from_file("res/aoc/6.txt");
+    
+    val grid = utils::parse_grid(input_string);
+
+    val pos = grid.guard_pos();
+    val dir = utils::point(0, -1);
+
+    val visited = Dict.new();
+
+    while true {
+        if !visited.has(pos) {
+            visited.set_new(pos, None);
+        }
+
+        val new_pos = pos.utils::add_point(dir);
+
+        if !grid.has(new_pos) {
+            return visited.keys().len()
+        }
+
+        if grid.get(new_pos) == '#' {
+            dir = dir.utils::rotate_cw();
+        } else {
+            pos = new_pos;
+        }
+
+    } 
+}
