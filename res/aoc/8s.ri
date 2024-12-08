@@ -1,0 +1,36 @@
+import utils;
+
+fun main() -> int {
+    val input_string: List = List.from_file("res/aoc/8.txt");
+    
+    val grid = input_string.utils::parse_grid();
+
+    val symbol_to_positions = Dict.new();
+    for key in grid.keys() {
+        val symbol = grid.get(key);
+        if symbol != '.' {
+            if !symbol_to_positions.has(symbol) {
+                symbol_to_positions.set_new(symbol, List.new())
+            }
+            symbol_to_positions.get(symbol).push(key);
+        }
+    }
+
+    val resonance_positions = Dict.new();
+
+    for symbol in symbol_to_positions.keys() {
+        val positions = symbol_to_positions.get(symbol);
+        for pos1 in positions {
+            for pos2 in positions {
+                if pos1 != pos2 {
+                    val resonance_position = pos1.utils::add_point(pos1).utils::sub_point(pos2);
+                    if grid.has(resonance_position) && !resonance_positions.has(resonance_position) {
+                        resonance_positions.set_new(resonance_position, None)
+                    }
+                }
+            }
+        }
+    }
+
+    resonance_positions.keys().len()
+}

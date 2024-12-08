@@ -210,6 +210,19 @@ fun add_point(p: List, q: List) -> List {
     result
 }
 
+fun sub_point(p: List, q: List) -> List {
+    val result = List.new();
+
+    val x = p.get(0) - q.get(0);
+    val y = p.get(1) - q.get(1);
+
+    result.push(x);
+    result.push(y);
+
+    result
+}
+
+
 fun rotate_cw(p: List) -> List {
     val result = List.new();
     result.push(-p.get(1));
