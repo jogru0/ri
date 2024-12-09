@@ -6,7 +6,13 @@ fun map(list: List, callable: Callable) -> List {
     result
 }
 
-
+fun max(lhs: int, rhs: int) -> int {
+    if lhs < rhs {
+        rhs
+    } else {
+        lhs
+    }
+}
 
 fun parse_digit(digit: char) -> List {
     val result = List.new();
@@ -75,6 +81,10 @@ fun optional(i: any) -> List {
     val result = List.new();
     result.push(i);
     result
+}
+
+fun unwrap(opt: List) -> any {
+    opt.get(0)
 }
 
 fun update_optional(i_ref: List, i: int) -> int {

@@ -3,6 +3,7 @@ use itertools::Itertools;
 use log::{debug, info};
 use std::hash::Hash;
 use std::iter::once;
+use std::num::TryFromIntError;
 use std::ops::{Div, Neg};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
@@ -34,8 +35,6 @@ pub enum RuntimeError {
     IncompatibleParameters(Vec<Ty>, Variables, Word),
     #[error("arguments '{0:?}' incompatible with internal function {1}")]
     IncompatibleParametersForInternal(Vec<Ty>, InternalFun),
-    #[error("missing '{}'", Token::Return)]
-    MisingReturn,
     #[error("unknown function '{0}'")]
     UnknownDotFunction(Word),
     //TODO constuctor, make sure they are unequal
@@ -101,6 +100,15 @@ pub enum PrimitiveConstant {
     Ty(Ty),
     Char(char),
     Callable(Callable),
+}
+
+impl TryInto<usize> for IntConstant {
+    type Error = TryFromIntError;
+
+    fn try_into(self) -> Result<usize, Self::Error> {
+        let IntConstant::Small(id) = self;
+        id.try_into()
+    }
 }
 
 impl PrimitiveConstant {
@@ -502,6 +510,7 @@ pub enum InternalFun {
     Debug,
     Push,
     Get,
+    Set,
     Pop,
     FromFile,
     Len,
@@ -522,6 +531,7 @@ impl Display for InternalFun {
             InternalFun::New => write!(f, "new"),
             InternalFun::Push => write!(f, "push"),
             InternalFun::Get => write!(f, "get"),
+            InternalFun::Set => write!(f, "set"),
             InternalFun::Pop => write!(f, "pop"),
             InternalFun::FromFile => write!(f, "from_file"),
             InternalFun::Len => write!(f, "len"),
@@ -546,6 +556,7 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
         "new".try_into().expect("const") => InternalFun::New,
         "push".try_into().expect("const") => InternalFun::Push,
         "get".try_into().expect("const") => InternalFun::Get,
+        "set".try_into().expect("const") => InternalFun::Set,
         "pop".try_into().expect("const") => InternalFun::Pop,
         "from_file".try_into().expect("const") => InternalFun::FromFile,
         "len".try_into().expect("const") => InternalFun::Len,
@@ -848,16 +859,16 @@ fn combine_with_operator(
         BinaryOperator::Division => lhs / rhs,
         BinaryOperator::Times => lhs * rhs,
         BinaryOperator::Minus => lhs - rhs,
-        BinaryOperator::Smaller => lhs
+        BinaryOperator::Comparison(Comparison::Equal) => Ok((lhs == rhs).into()),
+        BinaryOperator::Comparison(Comparison::Unequal) => Ok((lhs != rhs).into()),
+        BinaryOperator::Comparison(cmp) => lhs
             .partial_cmp(&rhs)
             .ok_or(RuntimeError::InvalidBinaryOperation(lhs, op, rhs))
-            .map(|ord| (ord == Ordering::Less).into()),
+            .map(|ord| (cmp.evaluate(ord)).into()),
         BinaryOperator::Modulo => lhs % rhs,
         //TODO error on ty mismatch
-        BinaryOperator::Equals => Ok((lhs == rhs).into()),
         BinaryOperator::And => Ok((lhs.get_bool()? && rhs.get_bool()?).into()),
         BinaryOperator::Or => Ok((lhs.get_bool()? || rhs.get_bool()?).into()),
-        BinaryOperator::Unequals => Ok((lhs != rhs).into()),
     }
 }
 
@@ -1056,6 +1067,28 @@ enum ModuleOrFun {
     Module(ModuleId),
     Fun(FunId),
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Comparison {
+    Smaller,
+    Greater,
+    Equal,
+    Unequal,
+    SmallerEqual,
+    GreaterEqual,
+}
+
+impl Comparison {
+    fn evaluate(&self, ord: Ordering) -> bool {
+        match self {
+            Comparison::Smaller => ord == Ordering::Less,
+            Comparison::Greater => ord == Ordering::Greater,
+            Comparison::Equal => ord == Ordering::Equal,
+            Comparison::Unequal => ord != Ordering::Equal,
+            Comparison::SmallerEqual => ord != Ordering::Greater,
+            Comparison::GreaterEqual => ord != Ordering::Less,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BinaryOperator {
@@ -1063,12 +1096,23 @@ pub enum BinaryOperator {
     Times,
     Division,
     Minus,
-    Smaller,
     Modulo,
-    Equals,
     And,
     Or,
-    Unequals,
+    Comparison(Comparison),
+}
+
+impl Display for Comparison {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Comparison::Smaller => write!(f, "<"),
+            Comparison::Greater => write!(f, ">"),
+            Comparison::Equal => write!(f, "=="),
+            Comparison::Unequal => write!(f, "!="),
+            Comparison::SmallerEqual => write!(f, "<="),
+            Comparison::GreaterEqual => write!(f, ">="),
+        }
+    }
 }
 
 impl Display for BinaryOperator {
@@ -1077,13 +1121,11 @@ impl Display for BinaryOperator {
             BinaryOperator::Plus => write!(f, "+"),
             BinaryOperator::Times => write!(f, "*"),
             BinaryOperator::Minus => write!(f, "-"),
-            BinaryOperator::Smaller => write!(f, "<"),
             BinaryOperator::Modulo => write!(f, "%"),
-            BinaryOperator::Equals => write!(f, "=="),
             BinaryOperator::And => write!(f, "&&"),
             BinaryOperator::Or => write!(f, "||"),
-            BinaryOperator::Unequals => write!(f, "!="),
             BinaryOperator::Division => write!(f, "/"),
+            BinaryOperator::Comparison(cmp) => write!(f, "{cmp}"),
         }
     }
 }
@@ -1103,13 +1145,11 @@ impl BinaryOperator {
             BinaryOperator::Plus => Stickyness::Addition,
             BinaryOperator::Times => Stickyness::Multiplication,
             BinaryOperator::Minus => Stickyness::Addition,
-            BinaryOperator::Smaller => Stickyness::Comparison,
             BinaryOperator::Modulo => Stickyness::Multiplication,
-            BinaryOperator::Equals => Stickyness::Comparison,
             BinaryOperator::And => Stickyness::Conjunction,
             BinaryOperator::Or => Stickyness::Disjunction,
-            BinaryOperator::Unequals => Stickyness::Comparison,
             BinaryOperator::Division => Stickyness::Multiplication,
+            BinaryOperator::Comparison(_) => Stickyness::Comparison,
         }
     }
 }
@@ -1273,8 +1313,13 @@ impl TokenStream<'_> {
                 Expr::Constant(ty.into())
             }
             Token::Return => {
-                let expr = self.parse_expr()?;
-
+                let expr = if self.entertain(Token::Semicolon) {
+                    Expr::Constant(Constant::HashableConstant(
+                        HashableConstant::PrimitiveConstant(PrimitiveConstant::None),
+                    ))
+                } else {
+                    self.parse_expr()?
+                };
                 Expr::Return(self.expressions.add(expr))
             }
             Token::Word(word) => {
@@ -1526,8 +1571,11 @@ impl TokenStream<'_> {
 
         let variables = self.parse_parameters()?;
 
-        self.expect(Token::Arrow)?;
-        let ty = self.expect_ty()?;
+        let ty = if self.entertain(Token::Arrow) {
+            self.expect_ty()?
+        } else {
+            GeneralTy::Ty(Ty::None)
+        };
 
         for variable in variables.map.keys() {
             //TODO Test error
@@ -2158,8 +2206,7 @@ impl Modules {
                     )),
                 )) = parameters.iter().collect_tuple()
                 {
-                    let IntConstant::Small(id) = i;
-                    let id: usize = id.try_into().map_err(|_| {
+                    let id: usize = i.try_into().map_err(|_| {
                         RuntimeError::IndexOutOfBounds(list.borrow().clone().into(), i)
                     })?;
 
@@ -2341,6 +2388,34 @@ impl Modules {
                             vacant_entry.insert(value.clone())
                         }
                     };
+
+                    return Ok(Constant::default());
+                }
+            }
+            InternalFun::Set => {
+                if let Some((
+                    Constant::HashableConstant(HashableConstant::List(list)),
+                    &Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                        PrimitiveConstant::Int(i),
+                    )),
+                    Constant::HashableConstant(value),
+                )) = parameters.iter().collect_tuple()
+                {
+                    let id: usize = i.try_into().map_err(|_| {
+                        RuntimeError::IndexOutOfBounds(list.borrow().clone().into(), i)
+                    })?;
+
+                    let mut list_borrow = list.borrow_mut();
+
+                    list_borrow
+                        .get_mut(id)
+                        .map(|entry| {
+                            *entry = value.clone();
+                        })
+                        .ok_or(RuntimeError::IndexOutOfBounds(
+                            list_borrow.clone().into(),
+                            i,
+                        ))?;
 
                     return Ok(Constant::default());
                 }
@@ -2812,7 +2887,9 @@ impl Parsee {
 
             if matches!(token, Token::Assign) && Some('=') == self.peek() {
                 self.next();
-                return Ok(Some(Token::BinaryOperator(BinaryOperator::Equals)));
+                return Ok(Some(Token::BinaryOperator(BinaryOperator::Comparison(
+                    Comparison::Equal,
+                ))));
             }
 
             if matches!(token, Token::BitAnd) && Some('&') == self.peek() {
@@ -2827,7 +2904,31 @@ impl Parsee {
 
             if matches!(token, Token::Negate) && Some('=') == self.peek() {
                 self.next();
-                return Ok(Some(Token::BinaryOperator(BinaryOperator::Unequals)));
+                return Ok(Some(Token::BinaryOperator(BinaryOperator::Comparison(
+                    Comparison::Unequal,
+                ))));
+            }
+
+            if matches!(
+                token,
+                Token::BinaryOperator(BinaryOperator::Comparison(Comparison::Greater))
+            ) && Some('=') == self.peek()
+            {
+                self.next();
+                return Ok(Some(Token::BinaryOperator(BinaryOperator::Comparison(
+                    Comparison::GreaterEqual,
+                ))));
+            }
+
+            if matches!(
+                token,
+                Token::BinaryOperator(BinaryOperator::Comparison(Comparison::Smaller))
+            ) && Some('=') == self.peek()
+            {
+                self.next();
+                return Ok(Some(Token::BinaryOperator(BinaryOperator::Comparison(
+                    Comparison::SmallerEqual,
+                ))));
             }
 
             if matches!(token, Token::Colon) && Some(':') == self.peek() {
@@ -2971,7 +3072,12 @@ fn single_digit_to_token(c: char) -> Option<Token> {
         '/' => Some(Token::BinaryOperator(BinaryOperator::Division)),
         '-' => Some(Token::BinaryOperator(BinaryOperator::Minus)),
         '*' => Some(Token::BinaryOperator(BinaryOperator::Times)),
-        '<' => Some(Token::BinaryOperator(BinaryOperator::Smaller)),
+        '<' => Some(Token::BinaryOperator(BinaryOperator::Comparison(
+            Comparison::Smaller,
+        ))),
+        '>' => Some(Token::BinaryOperator(BinaryOperator::Comparison(
+            Comparison::Greater,
+        ))),
         '%' => Some(Token::BinaryOperator(BinaryOperator::Modulo)),
         '(' => Some(Token::ParanLeft),
         ')' => Some(Token::ParanRight),
@@ -3000,6 +3106,8 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
         Some(Token::GeneralTy(GeneralTy::Ty(Ty::Range)))
     } else if keyword == "int" {
         Some(Token::GeneralTy(GeneralTy::Ty(Ty::Int)))
+    } else if keyword == "TYPE" {
+        Some(Token::GeneralTy(GeneralTy::Ty(Ty::Ty)))
     } else if keyword == "None" {
         Some(Token::GeneralTy(GeneralTy::Ty(Ty::None)))
     } else if keyword == "import" {

@@ -91,3 +91,13 @@ fn aoc8s() {
 fn aoc8g() {
     run("res/aoc/8g.ri", 1017);
 }
+
+#[test]
+fn aoc9s() {
+    run("res/aoc/9s.ri", 6370402949053);
+}
+
+#[test]
+fn aoc9g() {
+    run("res/aoc/9g.ri", 6398096697992);
+}

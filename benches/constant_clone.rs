@@ -7,9 +7,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     let mut group = c.benchmark_group("copy slowdown");
 
-    group.bench_function("copy", |b| {
-        b.iter(|| black_box(black_box(&copyable).clone()))
-    });
+    group.bench_function("copy", |b| b.iter(|| black_box(*black_box(&copyable))));
     group.bench_function("no copy", |b| {
         b.iter(|| black_box(black_box(&not_copyable).clone()))
     });

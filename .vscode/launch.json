@@ -10,7 +10,7 @@
             "name": "Debug",
             "program": "${workspaceFolder}/target/debug/ri",
             "args": [
-                "res/examples/ex3.ri"
+                "res/aoc/9s.ri"
             ],
             "cwd": "${workspaceFolder}"
         }

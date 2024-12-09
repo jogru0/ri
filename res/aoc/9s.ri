@@ -1,0 +1,58 @@
+import utils;
+
+fun write(disk: List, content: int, length: int) {
+    val i = 0;
+    while i < length {
+        disk.push(content);
+        i += 1;
+    }
+}
+
+fun move_to_next_free_id(next_free_id: int, disk: List) -> int {
+    while next_free_id < disk.len() && disk.get(next_free_id) != -1 {
+        next_free_id += 1;
+    }
+    next_free_id
+}
+
+fun checksum(disk: List) -> int {
+    val sum = 0;
+    for i, data in disk {
+        if data != -1 {
+            sum += i * data;
+        }
+    }
+    sum
+}
+
+fun main() -> int {
+    val input_string = List.from_file("res/aoc/9.txt");
+    input_string.pop();
+    val input: List = input_string.utils::map(utils::parse_digit).utils::map(utils::unwrap);
+    
+    val i = 0;
+    val length = input.len();
+    val disk = List.new();
+    while i < length {
+        val data_size = input.get(i);
+        val content = if i % 2 == 0 {
+            i / 2
+        } else {
+            -1
+        };
+        disk.write(content, data_size);
+        i += 1;
+    }
+
+
+    val next_free_id = 0.move_to_next_free_id(disk);
+    while next_free_id < disk.len() - 1 {
+        val to_compress = disk.pop();
+        if to_compress != -1 {
+            disk.set(next_free_id, to_compress);
+            next_free_id move_to_next_free_id= disk;
+        }
+    }
+
+    checksum(disk)
+}

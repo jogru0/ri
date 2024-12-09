@@ -1,0 +1,97 @@
+import utils;
+
+fun checksum(disk: List) -> int {
+    val sum = 0;
+    for i, data in disk {
+        if data != -1 {
+            sum += i * data;
+        }
+    }
+    sum
+}
+
+fun data_segment(start: int, size: int, content: int) -> List {
+    val res = List.new();
+    res.push(start);
+    res.push(size);
+    res.push(content);
+    res
+}
+
+fun main() -> int {
+    val input_string = List.from_file("res/aoc/9.txt");
+    input_string.pop();
+    val input: List = input_string.utils::map(utils::parse_digit).utils::map(utils::unwrap);
+    
+    val i = 0;
+    val data_start = 0;
+    val input_length = input.len();
+    val written = List.new();
+    val free = List.new();
+    while i < input_length {
+        val data_size = input.get(i);
+        if i % 2 == 0 {
+            written.push(data_segment(data_start, data_size, i / 2));
+        } else {
+            free.push(data_segment(data_start, data_size, -1));
+        };
+
+        data_start += data_size;
+        i += 1;
+    }
+
+    val seg_id = written.len() - 1;
+    while (seg_id > 0) {
+        val seg = written.get(seg_id);
+        move_forward(free, seg);
+        seg_id -= 1;
+    }
+
+    val space = 0;
+    for w in written {
+        space utils::max= w.get(0) + w.get(1);
+    }
+
+    val disk = List.new();
+    while space != 0 {
+        disk.push(-1);
+        space -= 1;
+    }
+
+    for w in written {
+        val start = w.get(0);
+        val length = w.get(1);
+        val content = w.get(2);
+
+        while length > 0 {
+            if disk.get(start) != -1 {
+                0 / 0;
+            }
+            disk.set(start, content);
+            start += 1;
+            length -= 1;
+        }
+    }
+
+    checksum(disk)
+}
+
+fun move_forward(free: List, seg: List) {
+    val start = seg.get(0);
+    val size = seg.get(1);
+
+    for f in free {
+        val s = f.get(0); 
+        if s >= start {
+            return;
+        }
+
+        val free_space = f.get(1);
+        if free_space >= size {
+            f.set(0, s + size);
+            f.set(1, free_space - size);
+            seg.set(0, s);
+            return; 
+        }
+    }
+}
