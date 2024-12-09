@@ -1,4 +1,4 @@
-use indexmap::{indexmap, indexset, IndexMap, IndexSet};
+use indexmap::{indexmap, indexset, map, IndexMap, IndexSet};
 use itertools::Itertools;
 use log::{debug, info};
 use std::hash::Hash;
@@ -43,7 +43,7 @@ pub enum RuntimeError {
     #[error("invalid operation:'{0} {1} {2}'")]
     InvalidBinaryOperation(Constant, BinaryOperator, Constant),
     #[error("function '{0}' has return type '{1}', but evaluated to '{2}'")]
-    WrongReturnType(Word, GeneralTy, Ty),
+    WrongReturnType(Word, Ty, Ty),
     #[error("missing entry point (function '{}')", *MAIN)]
     NoEntryPoint,
     #[error("index '{1}' out of bounds for list {0})")]
@@ -138,7 +138,15 @@ impl HashableConstant {
     fn ty(&self) -> Ty {
         match self {
             HashableConstant::PrimitiveConstant(primitive_constant) => primitive_constant.ty(),
-            HashableConstant::List(_) => Ty::List,
+            //TODO unwrap_or is wrong
+            HashableConstant::List(inner) => Ty::List(
+                inner
+                    .borrow()
+                    .first()
+                    .map(|c| c.ty())
+                    .unwrap_or(Ty::None)
+                    .into(),
+            ),
         }
     }
 
@@ -256,7 +264,15 @@ impl Constant {
 
     fn ty(&self) -> Ty {
         match self {
-            Constant::Dict(_) => Ty::Dict,
+            //TODO unwrap_or wrong
+            Constant::Dict(inner) => {
+                let (k_ty, v_ty) = inner
+                    .borrow()
+                    .first()
+                    .map(|(k, v)| (k.ty(), v.ty()))
+                    .unwrap_or((Ty::None, Ty::None));
+                Ty::Dict(Box::new(k_ty), Box::new(v_ty))
+            }
             Constant::HashableConstant(hashable_constant) => hashable_constant.ty(),
         }
     }
@@ -1308,7 +1324,7 @@ impl TokenStream<'_> {
                 let inner_expr = self.parse_non_binary()?;
                 Expr::Minus(self.expressions.add(inner_expr))
             }
-            Token::GeneralTy(ty) => {
+            Token::Ty(ty_token) => {
                 let ty: Ty = ty.try_into()?;
                 Expr::Constant(ty.into())
             }
@@ -1589,7 +1605,7 @@ impl TokenStream<'_> {
         Ok(Fun::new(name, variables, ty, body))
     }
 
-    fn expect_ty(&mut self) -> Result<GeneralTy, ParseError> {
+    fn expect_ty(&mut self) -> Result<TyToken, ParseError> {
         match self.next()? {
             Token::GeneralTy(word) => Ok(word),
             token => Err(ParseError::UnexpectedToken(token, "expected a type".into())),
@@ -1786,7 +1802,7 @@ impl Modules {
                 .map
                 .iter()
                 .zip(parameters.iter())
-                .all(|((_, variable), constant)| constant.ty().satisfies(variable.general_ty))
+                .all(|((_, variable), constant)| constant.ty().satisfies(variable.ty))
         {
             return Err(RuntimeError::IncompatibleParameters(
                 parameters.iter().map(|c| c.ty()).collect(),
@@ -2178,12 +2194,12 @@ impl Modules {
                 ))) = parameters.iter().collect_single()
                 {
                     match ty {
-                        Ty::List => {
+                        Ty::List(_) => {
                             return Ok(Constant::HashableConstant(HashableConstant::List(
                                 Default::default(),
                             )))
                         }
-                        Ty::Dict => return Ok(Constant::Dict(Default::default())),
+                        Ty::Dict(_, _) => return Ok(Constant::Dict(Default::default())),
                         _ => return Err(RuntimeError::StaticFunctionOnWrongType(ty, internal_fun)),
                     }
                 }
@@ -2260,7 +2276,14 @@ impl Modules {
                 )) = parameters.iter().collect_tuple()
                 {
                     match ty {
-                        Ty::List => {
+                        Ty::List(inner_ty) => {
+                            if *inner_ty != Ty::Char {
+                                return Err(RuntimeError::StaticFunctionOnWrongType(
+                                    ty,
+                                    internal_fun,
+                                ));
+                            }
+
                             let path = try_list_to_string(&list.borrow())?;
 
                             let file_content =
@@ -2572,32 +2595,39 @@ impl Tokens {
     }
 }
 
+struct ExprInfo {
+    ty: Ty,
+}
 pub struct Expressions {
-    vec: Vec<Expr>,
+    expressions: Vec<Expr>,
+    expression_infos: Vec<ExprInfo>,
 }
 impl Expressions {
     pub fn new() -> Self {
-        Self { vec: Vec::new() }
+        Self {
+            expressions: Vec::new(),
+            expression_infos: Vec::new(),
+        }
     }
 
     fn add(&mut self, expr: Expr) -> ExprId {
         let res = self.next_expr_id();
-        self.vec.push(expr);
+        self.expressions.push(expr);
         res
     }
 
     fn get(&self, expr_id: ExprId) -> &Expr {
-        &self.vec[expr_id.0]
+        &self.expressions[expr_id.0]
     }
 
     //TODO private
     fn next_expr_id(&self) -> ExprId {
-        ExprId(self.vec.len())
+        ExprId(self.expressions.len())
     }
 
     fn add_range(&mut self, exprs: impl IntoIterator<Item = Expr>) -> ExprRange {
         let start = self.next_expr_id();
-        self.vec.extend(exprs);
+        self.expressions.extend(exprs);
         let end = self.next_expr_id();
         ExprRange { start, end }
     }
@@ -2741,11 +2771,11 @@ fn str_to_list(s: &str) -> Vec<HashableConstant> {
 pub struct Fun {
     name: Word,
     variables: Variables,
-    ty: GeneralTy,
+    ty: Ty,
     body: Block,
 }
 impl Fun {
-    fn new(name: Word, variables: Variables, ty: GeneralTy, body: Block) -> Self {
+    fn new(name: Word, variables: Variables, ty: Ty, body: Block) -> Self {
         Self {
             name,
             variables,
@@ -2758,11 +2788,11 @@ impl Fun {
 #[derive(Eq, Clone, Hash, PartialEq, Debug)]
 struct Variable {
     name: Word,
-    general_ty: GeneralTy,
+    ty: Ty,
 }
 impl Variable {
-    fn new(name: Word, general_ty: GeneralTy) -> Self {
-        Self { name, general_ty }
+    fn new(name: Word, ty: Ty) -> Self {
+        Self { name, ty }
     }
 }
 
@@ -3196,39 +3226,42 @@ pub mod word {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Copy)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Ty {
     Int,
     Bool,
     None,
-    Dict,
-    List,
-    Range,
+    Dict(Box<Ty>, Box<Ty>),
+    List(Box<Ty>),
     Ty,
     Callable,
     Char,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub enum GeneralTy {
-    Ty(Ty),
-    Any,
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
+pub enum TyToken {
+    Int,
+    Bool,
+    None,
+    Dict,
+    List,
+    Ty,
+    Callable,
+    Char,
 }
 
-impl Display for GeneralTy {
+impl Display for TyToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            GeneralTy::Ty(ty) => write!(f, "{ty}"),
             GeneralTy::Any => write!(f, "any"),
-        }
-    }
-}
-
-impl Ty {
-    fn satisfies(self, other: GeneralTy) -> bool {
-        match (self, other) {
-            (_, GeneralTy::Any) => true,
-            (lhs, GeneralTy::Ty(rhs)) => lhs == rhs,
+            TyToken::Int => write!(f, "int"),
+            TyToken::Bool => write!(f, "bool"),
+            TyToken::None => write!(f, "None"),
+            TyToken::Dict => write!(f, "Dict"),
+            TyToken::List => write!(f, "List"),
+            TyToken::Ty => write!(f, "TYPE"),
+            TyToken::Callable => write!(f, "Callable"),
+            TyToken::Char => write!(f, "char"),
         }
     }
 }
@@ -3236,26 +3269,14 @@ impl Ty {
 impl Display for Ty {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Ty::List => write!(f, "List"),
+            Ty::List(inner_ty) => write!(f, "List({})", *inner_ty),
             Ty::Int => write!(f, "int"),
             Ty::Bool => write!(f, "bool"),
-            Ty::Range => write!(f, "Range"),
             Ty::None => write!(f, "None"),
             Ty::Ty => write!(f, "TYPE"),
             Ty::Char => write!(f, "char"),
             Ty::Callable => write!(f, "Callable"),
-            Ty::Dict => write!(f, "Dict"),
-        }
-    }
-}
-
-impl TryFrom<GeneralTy> for Ty {
-    type Error = ParseError;
-
-    fn try_from(value: GeneralTy) -> Result<Self, Self::Error> {
-        match value {
-            GeneralTy::Ty(ty) => Ok(ty),
-            GeneralTy::Any => todo!(),
+            Ty::Dict(key_ty, value_ty) => write!(f, "Dict({}, {})", key_ty, value_ty),
         }
     }
 }
@@ -3266,7 +3287,7 @@ pub enum Token {
     Else,
     Import,
     DoubleColon,
-    GeneralTy(GeneralTy),
+    Ty(TyToken),
     Word(Word),
     Literal(Constant),
     BinaryOperator(BinaryOperator),
