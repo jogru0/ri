@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use ri::parse::{
-    evaluate_debug, Constant, Expressions, ModuleHeaders, ModuleId, TokenStream, Tokens, Ty,
+    evaluate_debug, Constant, Expressions, ModuleHeaders, ModuleId, TokenStream, Tokens, Ty, Ty2,
 };
 
 fn eval(expr: &str) -> Result<Constant, Box<dyn Error>> {
@@ -21,7 +21,7 @@ fn eval(expr: &str) -> Result<Constant, Box<dyn Error>> {
 
     assert!(ts.is_fully_parsed());
 
-    Ok(evaluate_debug(expr, Ty::Int, expressions)?)
+    Ok(evaluate_debug(expr, Ty::Int, Ty2::Int, expressions)?)
 }
 
 #[test]
