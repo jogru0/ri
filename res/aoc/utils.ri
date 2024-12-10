@@ -14,6 +14,19 @@ fun max(lhs: int, rhs: int) -> int {
     }
 }
 
+fun neighbors4(p: List) -> List {
+    val x = p.get(0);
+    val y = p.get(1);
+    
+    val result = List.new();
+    result.push(point(x + 1, y));
+    result.push(point(x - 1, y));
+    result.push(point(x, y + 1));
+    result.push(point(x, y - 1));
+    result
+    
+}
+
 fun parse_digit(digit: char) -> List {
     val result = List.new();
 
@@ -99,6 +112,12 @@ fun peek(input_string: List, i: int) -> List {
         result.push(input_string.get(i));
     }
     result
+}
+
+fun set_if_new(dict: Dict, elem: any) {
+    if !dict.has(elem) {
+        dict.set_new(elem, None);
+    }
 }
 
 fun split_at(input_string: List, separator: char) -> List {
