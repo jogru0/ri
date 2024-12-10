@@ -433,7 +433,7 @@ pub enum Expr {
     //TODO: Test for block here
     If(ExprId, Block, ExprId),
     While(ExprId, Block),
-    Call(Call),
+    Call(Call, Ty2),
     Assign(VariableId, ExprId),
     Introduce(VariableId, ExprId),
     For(VariableId, Option<VariableId>, ExprId, Block),
@@ -618,6 +618,11 @@ impl InternalFun {
 impl Block {
     fn new(statements: ExprRange) -> Self {
         Self { statements }
+    }
+
+    fn get_last(&self) -> ExprId {
+        assert_ne!(self.statements.start, self.statements.end);
+        ExprId(self.statements.end.0 - 1)
     }
 }
 
@@ -1058,18 +1063,37 @@ impl<'a> TokenStream<'a> {
     fn calculate_ty(&self, expr: &Expr) -> Ty2 {
         let ty = match expr {
             Expr::Return(expr_id) => self.get_ty(*expr_id),
+            //TODO Invariant that it matches?
             Expr::Constant(_, ty2) => ty2,
             Expr::Variable(variable_id) => self.stack.get_index(*variable_id).1,
-            Expr::BinaryOp(expr_id, binary_operator, expr_id1) => todo!(),
-            Expr::Block(block) => todo!(),
-            Expr::If(expr_id, block, expr_id1) => todo!(),
-            Expr::While(expr_id, block) => todo!(),
-            Expr::Call(call) => todo!(),
-            Expr::Assign(variable_id, expr_id) => todo!(),
-            Expr::Introduce(variable_id, expr_id) => todo!(),
-            Expr::For(variable_id, variable_id1, expr_id, block) => todo!(),
-            Expr::Negate(expr_id) => todo!(),
-            Expr::Minus(expr_id) => todo!(),
+            Expr::BinaryOp(expr_id, binary_operator, expr_id1) => {
+                &binary_operator.get_ty(self.get_ty(*expr_id), self.get_ty(*expr_id1))
+            }
+            Expr::Block(block) => self.get_ty(block.get_last()),
+            Expr::If(expr_id, if_block, else_expr) => {
+                assert_eq!(self.get_ty(*expr_id), &Ty2::Bool);
+                let ty = self.get_ty(if_block.get_last());
+                assert_eq!(ty, self.get_ty(*else_expr));
+                ty
+            }
+            Expr::While(expr_id, _) => {
+                assert_eq!(self.get_ty(*expr_id), &Ty2::Bool);
+                &Ty2::None
+            }
+            //TODO Invariant that it matches?
+            Expr::Call(_, ty) => ty,
+            //TODO checks for right inner types below
+            Expr::Assign(_, _) => &Ty2::None,
+            Expr::Introduce(_, _) => &Ty2::None,
+            Expr::For(_, _, _, _) => &Ty2::None,
+            Expr::Negate(expr_id) => {
+                assert_eq!(self.get_ty(expr_id), Ty2::Bool);
+                Ty2::Bool
+            }
+            Expr::Minus(expr_id) => {
+                assert_eq!(self.get_ty(expr_id), Ty2::Int);
+                Ty2::Int
+            }
         };
 
         ty.clone()
@@ -1230,6 +1254,34 @@ impl BinaryOperator {
             BinaryOperator::Or => Stickyness::Disjunction,
             BinaryOperator::Division => Stickyness::Multiplication,
             BinaryOperator::Comparison(_) => Stickyness::Comparison,
+        }
+    }
+
+    fn get_ty(&self, lhs_ty: &Ty2, rhs_ty: &Ty2) -> Ty2 {
+        match self {
+            BinaryOperator::Plus
+            | BinaryOperator::Times
+            | BinaryOperator::Division
+            | BinaryOperator::Minus
+            | BinaryOperator::Modulo => {
+                assert_eq!(lhs_ty, &Ty2::Int);
+                assert_eq!(rhs_ty, &Ty2::Int);
+                Ty2::Int
+            }
+            BinaryOperator::And => {
+                assert_eq!(lhs_ty, &Ty2::Bool);
+                assert_eq!(rhs_ty, &Ty2::Bool);
+                Ty2::Bool
+            }
+            BinaryOperator::Or => {
+                assert_eq!(lhs_ty, &Ty2::Bool);
+                assert_eq!(rhs_ty, &Ty2::Bool);
+                Ty2::Bool
+            }
+            BinaryOperator::Comparison(_) => {
+                assert_eq!(lhs_ty, rhs_ty);
+                Ty2::Bool
+            }
         }
     }
 }
