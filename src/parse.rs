@@ -6,7 +6,7 @@ use std::iter::once;
 use std::num::TryFromIntError;
 use std::ops::{Div, Neg};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::time::Instant;
 use std::{
     cell::RefCell,
@@ -111,16 +111,6 @@ impl TryInto<usize> for IntConstant {
 }
 
 impl PrimitiveConstant {
-    fn ty(&self) -> Ty {
-        match self {
-            Self::Int(_) => Ty::Int,
-            Self::Bool(_) => Ty::Bool,
-            Self::None => Ty::None,
-            Self::Char(_) => Ty::Char,
-            Self::Callable(_) => Ty::Callable,
-        }
-    }
-
     fn deep_clone(&self) -> PrimitiveConstant {
         self.clone()
     }
@@ -147,7 +137,6 @@ impl HashableConstant {
 
                 HashableConstant::List(Rc::new(RefCell::new(clone)))
             }
-            HashableConstant::Ty(ty2) => HashableConstant::Ty(ty2.clone()),
         }
     }
 }
@@ -180,10 +169,6 @@ impl Hash for HashableConstant {
                 state.write_u8(1);
                 (*rc.borrow()).hash(state);
             }
-            HashableConstant::Ty(ty2) => {
-                state.write_u8(2);
-                ty2.hash(state)
-            }
         }
     }
 }
@@ -192,7 +177,6 @@ impl Hash for HashableConstant {
 pub enum HashableConstant {
     PrimitiveConstant(PrimitiveConstant),
     List(Rc<RefCell<Vec<HashableConstant>>>),
-    Ty(Ty2),
 }
 
 #[derive(Clone, Debug)]
@@ -282,12 +266,19 @@ impl Display for Ty2 {
             Ty2::Bool => write!(f, "bool"),
             Ty2::None => write!(f, "None"),
             Ty2::Ty => write!(f, "TYPE"),
-            Ty2::Callable => write!(f, "Callable"),
+            //TODO nicer
+            Ty2::Callable(args, res) => write!(f, "Callable({:?}, {})", args, res),
             Ty2::Char => write!(f, "char"),
             //TODO
             Ty2::Generic(generic_ty_id) => write!(f, "GENERIC({})", generic_ty_id.0),
             Ty2::Dict(key_ty, value_ty) => write!(f, "Dict<{}, {}>", key_ty, value_ty),
-            Ty2::List(inner_ty) => write!(f, "List<{}>", inner_ty),
+            Ty2::List(inner_ty) => {
+                if **inner_ty == Ty2::Char {
+                    write!(f, "String")
+                } else {
+                    write!(f, "List<{}>", inner_ty)
+                }
+            }
         }
     }
 }
@@ -333,7 +324,6 @@ impl Display for HashableConstant {
                     write!(f, "]")
                 }
             }
-            Self::Ty(ty2) => write!(f, "{ty2}"),
         }
     }
 }
@@ -446,18 +436,6 @@ impl Expr {
         Constant::HashableConstant(HashableConstant::PrimitiveConstant(PrimitiveConstant::None)),
         Ty2::None,
     );
-
-    //TODO: For now, disallow generics completely.
-    fn from_ty(ty: Ty2) -> Result<Self, ParseError> {
-        if ty.is_generic() {
-            Err(ParseError::DisallowedGenerics(ty))
-        } else {
-            Ok(Self::Constant(
-                Constant::HashableConstant(HashableConstant::Ty(ty)),
-                Ty2::Ty,
-            ))
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -613,6 +591,56 @@ impl InternalFun {
     fn get(name: &Word) -> Option<Self> {
         WORD_INTERNAL_FUN_MAP.get(name).copied()
     }
+
+    //TODO: Check if specific values of generic vars are allowed
+    fn ty(&self, generic_vars: Vec<Ty2>) -> Result<Ty2, ParseError> {
+        match self {
+            InternalFun::New => {
+                let Some(res) = generic_vars.iter().collect_single() else {
+                    return Err(ParseError::InvalidGenericVars(generic_vars));
+                };
+                Ok(Ty2::Callable(vec![], Box::new(res.clone())))
+            }
+
+            InternalFun::Remove => todo!(),
+            InternalFun::Invoke => todo!(),
+            InternalFun::Debug => todo!(),
+            InternalFun::Push => todo!(),
+            InternalFun::Get => todo!(),
+            InternalFun::Set => todo!(),
+            InternalFun::Pop => todo!(),
+            InternalFun::FromFile => {
+                let Some(_) = generic_vars.iter().collect_nothing() else {
+                    return Err(ParseError::InvalidGenericVars(generic_vars));
+                };
+                Ok(Ty2::Callable(vec![], Box::new(Ty2::string())))
+            }
+            InternalFun::Len => todo!(),
+            InternalFun::SplitWhitespace => {
+                let Some(_) = generic_vars.iter().collect_nothing() else {
+                    return Err(ParseError::InvalidGenericVars(generic_vars));
+                };
+                Ok(Ty2::Callable(
+                    vec![Ty2::string()],
+                    Box::new(Ty2::List(Box::new(Ty2::string()))),
+                ))
+            }
+            InternalFun::Parse => {
+                let Some(res) = generic_vars.iter().collect_single() else {
+                    return Err(ParseError::InvalidGenericVars(generic_vars));
+                };
+                Ok(Ty2::Callable(vec![Ty2::string()], Box::new(res.clone())))
+            }
+            InternalFun::Sort => todo!(),
+            InternalFun::Abs => todo!(),
+            InternalFun::Lines => todo!(),
+            InternalFun::SetNew => todo!(),
+            InternalFun::Has => todo!(),
+            InternalFun::Keys => todo!(),
+            InternalFun::DeepClone => todo!(),
+            InternalFun::UpdateExisting => todo!(),
+        }
+    }
 }
 
 impl Block {
@@ -630,11 +658,16 @@ impl Block {
 pub struct Variables {
     map: IndexMap<Word, Variable>,
 }
+
 impl Variables {
     fn new() -> Self {
         Self {
             map: IndexMap::new(),
         }
+    }
+
+    fn tys(&self) -> Vec<Ty2> {
+        self.map.values().map(|v| v.ty()).cloned().collect()
     }
 
     fn insert_new(&mut self, variable: Variable) -> Result<(), ParseError> {
@@ -941,6 +974,8 @@ pub enum ParseError {
     //TODO constuctor, make sure they are unequal
     #[error("type error: expected '{0}', found '{1}'")]
     TypeError(Ty2, Ty2),
+    #[error("generic vars '{0:?}' invalid here")]
+    InvalidGenericVars(Vec<Ty2>),
 }
 
 pub struct Tokens(Vec<Token>);
@@ -964,12 +999,14 @@ impl Tokens {
         Ok(Self(vec))
     }
 
+    //TODO lint
+    #[expect(clippy::type_complexity)]
     pub fn get_top_level_declarations(
         &self,
-    ) -> Result<(IndexSet<Word>, IndexSet<Word>), ParseError> {
+    ) -> Result<(IndexMap<Word, (Vec<Ty2>, Ty2)>, IndexSet<Word>), ParseError> {
         let mut stream = TokenStreamBasic::new(self);
 
-        let mut fun_names = IndexSet::new();
+        let mut fun_names = IndexMap::new();
         let mut module_names = IndexSet::new();
 
         loop {
@@ -977,10 +1014,26 @@ impl Tokens {
                 // TODO: Error flow
                 Err(_) => break,
                 Ok(Token::Fun) => {
+                    //TODO Unify with actual parse of fun
                     let name = stream.expect_word()?;
-                    //TODO I don't like this clone.
-                    let inserted = fun_names.insert(name.clone());
-                    if !inserted {
+
+                    stream.expect(Token::ParanLeft)?;
+                    let mut args = Vec::new();
+                    while !stream.entertain(Token::ParanRight) {
+                        stream.expect_word()?;
+                        stream.expect(Token::Colon)?;
+                        args.push(stream.parse_ty()?);
+                    }
+
+                    let res = if stream.entertain(Token::Arrow) {
+                        stream.parse_ty()?
+                    } else {
+                        Ty2::None
+                    };
+
+                    //TODO I don't like this clone of name.
+                    let inserted = fun_names.insert(name.clone(), (args, res));
+                    if inserted.is_some() {
                         return Err(ParseError::AlreadyDefinedFunction(name));
                     }
                 }
@@ -1028,6 +1081,78 @@ impl<'a> TokenStreamBasic<'a> {
         match self.next()? {
             Token::Word(word) => Ok(word),
             token => Err(ParseError::UnexpectedToken(token, "expected a word".into())),
+        }
+    }
+
+    fn entertain(&mut self, entertained: Token) -> bool {
+        if self.peek() == Some(entertained) {
+            self.next().expect("just peeked");
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect(&mut self, expected: Token) -> Result<(), ParseError> {
+        let actual = self.next()?;
+        if expected == actual {
+            Ok(())
+        } else {
+            Err(ParseError::UnexpectedToken(
+                actual,
+                format!("expected '{expected}'"),
+            ))
+        }
+    }
+
+    //TODO The duplication (peek, expect, entertain, but worst of all, this)
+    fn parse_ty(&mut self) -> Result<Ty2, ParseError> {
+        match self.next()? {
+            Token::Ty(ty_token) => match ty_token {
+                TyToken::Int => Ok(Ty2::Int),
+                TyToken::Char => Ok(Ty2::Char),
+                TyToken::Bool => Ok(Ty2::Bool),
+                TyToken::List => {
+                    self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
+                        Comparison::Smaller,
+                    )))?;
+                    let inner = self.parse_ty()?;
+                    self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
+                        Comparison::Greater,
+                    )))?;
+                    Ok(Ty2::List(Box::new(inner)))
+                }
+                TyToken::Dict => {
+                    self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
+                        Comparison::Smaller,
+                    )))?;
+                    let key_ty = self.parse_ty()?;
+                    self.expect(Token::Comma)?;
+                    let value_ty = self.parse_ty()?;
+                    self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
+                        Comparison::Greater,
+                    )))?;
+                    Ok(Ty2::Dict(Box::new(key_ty), Box::new(value_ty)))
+                }
+                TyToken::Callable => {
+                    self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
+                        Comparison::Smaller,
+                    )))?;
+                    let mut types = vec![self.parse_ty()?];
+                    while self.entertain(Token::Comma) {
+                        types.push(self.parse_ty()?);
+                    }
+                    self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
+                        Comparison::Greater,
+                    )))?;
+                    let res = types.pop().expect("parsed one type before loop");
+                    Ok(Ty2::Callable(types, Box::new(res)))
+                }
+                TyToken::None => Ok(Ty2::None),
+                TyToken::Ty => Ok(Ty2::Ty),
+                TyToken::String => Ok(Ty2::string()),
+            },
+            token => Err(ParseError::UnexpectedToken(token, "expected a type".into())),
         }
     }
 }
@@ -1081,18 +1206,24 @@ impl<'a> TokenStream<'a> {
                 &Ty2::None
             }
             //TODO Invariant that it matches?
-            Expr::Call(_, ty) => ty,
+            Expr::Call(_, ty) => {
+                //TODO
+                let Ty2::Callable(_, res) = ty else {
+                    panic!("type of callable is not callable");
+                };
+                res
+            }
             //TODO checks for right inner types below
             Expr::Assign(_, _) => &Ty2::None,
             Expr::Introduce(_, _) => &Ty2::None,
             Expr::For(_, _, _, _) => &Ty2::None,
             Expr::Negate(expr_id) => {
-                assert_eq!(self.get_ty(expr_id), Ty2::Bool);
-                Ty2::Bool
+                assert_eq!(self.get_ty(*expr_id), &Ty2::Bool);
+                &Ty2::Bool
             }
             Expr::Minus(expr_id) => {
-                assert_eq!(self.get_ty(expr_id), Ty2::Int);
-                Ty2::Int
+                assert_eq!(self.get_ty(*expr_id), &Ty2::Int);
+                &Ty2::Int
             }
         };
 
@@ -1126,10 +1257,14 @@ impl<'a> TokenStream<'a> {
 
         match self.get_module_or_fun(module_id, &entry)? {
             ModuleOrFun::Module(module_id) => self.parse_module_expr(module_id),
-            ModuleOrFun::Fun(fun_id) => Ok(Expr::Constant(fun_id.into(), Ty2::Callable)),
+            ModuleOrFun::Fun(fun_id, args, res) => Ok(Expr::Constant(
+                fun_id.into(),
+                Ty2::Callable(args, Box::new(res)),
+            )),
         }
     }
 
+    //TODO Return reference?
     fn get_module_or_fun(
         &self,
         module_id: ModuleId,
@@ -1143,7 +1278,7 @@ impl<'a> TokenStream<'a> {
             .0
             .get(entry)
             .ok_or(ParseError::NotDefined(entry.clone()))
-            .copied()
+            .cloned()
     }
 
     fn add_two(&mut self, first: Expr, second: Expr) -> (ExprRange, ExprId, ExprId) {
@@ -1156,7 +1291,7 @@ impl<'a> TokenStream<'a> {
         (range, first_id, second_id)
     }
 
-    fn add_range(&mut self, mut statements: impl IntoIterator<Item = Expr>) -> ExprRange {
+    fn add_range(&mut self, statements: impl IntoIterator<Item = Expr>) -> ExprRange {
         let start = self.expressions.next_expr_id();
         for statement in statements {
             self.add(statement);
@@ -1164,12 +1299,32 @@ impl<'a> TokenStream<'a> {
         let end = self.expressions.next_expr_id();
         ExprRange { start, end }
     }
+
+    //TODO This is probably duplicated somewhere.
+    fn parse_generic_variables(&mut self) -> Result<Vec<Ty2>, ParseError> {
+        let mut res = Vec::new();
+        if !self.entertain(Token::BinaryOperator(BinaryOperator::Comparison(
+            Comparison::Smaller,
+        ))) {
+            return Ok(res);
+        }
+
+        res.push(self.parse_ty()?);
+        while self.entertain(Token::Comma) {
+            res.push(self.parse_ty()?);
+        }
+
+        self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
+            Comparison::Smaller,
+        )))?;
+        Ok(res)
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 enum ModuleOrFun {
     Module(ModuleId),
-    Fun(FunId),
+    Fun(FunId, Vec<Ty2>, Ty2),
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Comparison {
@@ -1306,9 +1461,9 @@ struct Stack {
 }
 impl Stack {
     fn push(&mut self, word: Word, ty: Ty2) -> Result<VariableId, ParseError> {
-        let (res, was_inserted) = self.variables.insert_full(word, ty);
+        let (res, previous_val) = self.variables.insert_full(word, ty);
 
-        if was_inserted.is_some() {
+        if previous_val.is_none() {
             Ok(VariableId(res))
         } else {
             Err(ParseError::AlreadyDefinedVariable(
@@ -1399,7 +1554,12 @@ impl TokenStream<'_> {
         Ok((ast, follow_up))
     }
 
-    fn interpret_word(&mut self, word: &Word) -> Result<Expr, ParseError> {
+    fn interpret_word(
+        &mut self,
+        word: &Word,
+        //TODO Make sure this is not set when it shouldn't be set.
+        initial_generic_vatiable: Option<Ty2>,
+    ) -> Result<Expr, ParseError> {
         // //TODO Err flow
         let variable_id = self.stack.get(word).ok();
         let module_or_fun = self.get_module_or_fun(self.module_id, word).ok();
@@ -1413,14 +1573,22 @@ impl TokenStream<'_> {
                 }
                 Ok(Expr::Variable(variable_id))
             }
-            (None, Some(ModuleOrFun::Fun(fun_id)), None) => {
-                Ok(Expr::Constant(Callable::Fun(fun_id).into(), Ty2::Callable))
-            }
-            (None, Some(ModuleOrFun::Module(module_id)), None) => self.parse_module_expr(module_id),
-            (None, None, Some(internal_fun)) => Ok(Expr::Constant(
-                Callable::InternalFun(internal_fun).into(),
-                Ty2::Callable,
+            (None, Some(ModuleOrFun::Fun(fun_id, args, res)), None) => Ok(Expr::Constant(
+                Callable::Fun(fun_id).into(),
+                Ty2::Callable(args, Box::new(res)),
             )),
+            (None, Some(ModuleOrFun::Module(module_id)), None) => self.parse_module_expr(module_id),
+            (None, None, Some(internal_fun)) => {
+                let mut generic_variables = self.parse_generic_variables()?;
+                if let Some(initial_generic_variable) = initial_generic_vatiable {
+                    generic_variables.insert(0, initial_generic_variable);
+                }
+
+                Ok(Expr::Constant(
+                    Callable::InternalFun(internal_fun).into(),
+                    internal_fun.ty(generic_variables)?,
+                ))
+            }
             (None, None, None) => Err(ParseError::NotDefined(word.clone())),
             (_, _, _) => Err(ParseError::NotUniquelyDefined(word.clone())),
         }
@@ -1453,8 +1621,15 @@ impl TokenStream<'_> {
             }
             Token::Ty(_) => {
                 let ty = self.parse_ty()?;
+                self.expect(Token::Dot)?;
+                let word = self.expect_word()?;
 
-                Expr::from_ty(ty)?
+                let expr = self.interpret_word(&word, Some(ty))?;
+                if let Some(Token::ParanLeft) = self.peek() {
+                    self.parse_fun_arguments(expr, None)?
+                } else {
+                    expr
+                }
             }
             Token::Return => {
                 self.next().expect("just peeked");
@@ -1467,7 +1642,7 @@ impl TokenStream<'_> {
             }
             Token::Word(word) => {
                 self.next().expect("just peeked");
-                let expr = self.interpret_word(&word)?;
+                let expr = self.interpret_word(&word, None)?;
                 if let Some(Token::ParanLeft) = self.peek() {
                     self.parse_fun_arguments(expr, None)?
                 } else {
@@ -1488,7 +1663,7 @@ impl TokenStream<'_> {
 
         while self.entertain(Token::Dot) {
             let name = self.expect_word()?;
-            let callable_expr = self.interpret_word(&name)?;
+            let callable_expr = self.interpret_word(&name, None)?;
             expr = self.parse_fun_arguments(callable_expr, Some(expr))?;
         }
 
@@ -1504,7 +1679,7 @@ impl TokenStream<'_> {
             Some(Token::Word(name)) => {
                 self.next().expect("just peeked");
                 //TODO where to convert to ExprId
-                Ok(FollowUp::Callable(self.interpret_word(&name)?))
+                Ok(FollowUp::Callable(self.interpret_word(&name, None)?))
             }
             None
             | Some(
@@ -1640,10 +1815,16 @@ impl TokenStream<'_> {
                     FollowUp::BinaryOperator(binary_operator) => {
                         Expr::BinaryOp(lhs, binary_operator, rhs)
                     }
-                    FollowUp::Callable(callable) => Expr::Call(Call {
-                        callable: self.add(callable),
-                        arguments: range,
-                    }),
+                    FollowUp::Callable(callable) => {
+                        let callable_id = self.add(callable);
+                        Expr::Call(
+                            Call {
+                                callable: callable_id,
+                                arguments: range,
+                            },
+                            self.get_ty(callable_id).clone(),
+                        )
+                    }
                     _ => unreachable!("allow_assign"),
                 };
 
@@ -1740,9 +1921,10 @@ impl TokenStream<'_> {
 
         self.stack.variables.clear();
 
-        Ok(Fun::new(name, variables, ty, body))
+        Ok(Fun::new(name, variables, body, ty))
     }
 
+    //TODO: Extract code for parsing '<Type ...>'
     fn parse_ty(&mut self) -> Result<Ty2, ParseError> {
         match self.next()? {
             Token::Ty(ty_token) => match ty_token {
@@ -1752,28 +1934,42 @@ impl TokenStream<'_> {
                 TyToken::List => {
                     self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
                         Comparison::Smaller,
-                    )));
+                    )))?;
                     let inner = self.parse_ty()?;
                     self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
                         Comparison::Greater,
-                    )));
+                    )))?;
                     Ok(Ty2::List(Box::new(inner)))
                 }
                 TyToken::Dict => {
                     self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
                         Comparison::Smaller,
-                    )));
+                    )))?;
                     let key_ty = self.parse_ty()?;
                     self.expect(Token::Comma)?;
                     let value_ty = self.parse_ty()?;
                     self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
                         Comparison::Greater,
-                    )));
+                    )))?;
                     Ok(Ty2::Dict(Box::new(key_ty), Box::new(value_ty)))
                 }
-                TyToken::Callable => Ok(Ty2::Callable),
+                TyToken::Callable => {
+                    self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
+                        Comparison::Smaller,
+                    )))?;
+                    let mut types = vec![self.parse_ty()?];
+                    while self.entertain(Token::Comma) {
+                        types.push(self.parse_ty()?);
+                    }
+                    self.expect(Token::BinaryOperator(BinaryOperator::Comparison(
+                        Comparison::Greater,
+                    )))?;
+                    let res = types.pop().expect("parsed one type before loop");
+                    Ok(Ty2::Callable(types, Box::new(res)))
+                }
                 TyToken::None => Ok(Ty2::None),
                 TyToken::Ty => Ok(Ty2::Ty),
+                TyToken::String => Ok(Ty2::string()),
             },
             token => Err(ParseError::UnexpectedToken(token, "expected a type".into())),
         }
@@ -1882,10 +2078,13 @@ impl TokenStream<'_> {
 
         let range = self.add_range(statements);
 
-        Ok(Expr::Call(Call {
-            callable,
-            arguments: range,
-        }))
+        Ok(Expr::Call(
+            Call {
+                callable,
+                arguments: range,
+            },
+            self.get_ty(callable).clone(),
+        ))
     }
 }
 
@@ -2304,7 +2503,7 @@ impl Modules {
             Expr::If(expr, if_block, else_expr) => {
                 self.evaluate_if(expr, if_block, else_expr, variable_values)
             }
-            Expr::Call(call) => self.evaluate_call(call, variable_values),
+            Expr::Call(call, _) => self.evaluate_call(call, variable_values),
             Expr::Assign(variable_id, expr_id) => {
                 self.evaluate_assign(variable_id, expr_id, variable_values)
             }
@@ -2664,13 +2863,18 @@ impl Modules {
             let (fun_names, module_names) = tokens.get_top_level_declarations()?;
 
             let mut map = IndexMap::new();
+            //TODO: fun_name is the wrong name and accessing it this way is horrible.
             for (i, fun_name) in fun_names.into_iter().enumerate() {
                 map.insert(
-                    fun_name,
-                    ModuleOrFun::Fun(FunId {
-                        module_id: ModuleId(module_headers.len()),
-                        fun_in_module: i,
-                    }),
+                    fun_name.0,
+                    ModuleOrFun::Fun(
+                        FunId {
+                            module_id: ModuleId(module_headers.len()),
+                            fun_in_module: i,
+                        },
+                        fun_name.1 .0,
+                        fun_name.1 .1,
+                    ),
                 );
             }
             for module_name in module_names {
@@ -2702,7 +2906,7 @@ impl Modules {
             .get(&*MAIN)
             .and_then(|module_or_fun| match module_or_fun {
                 ModuleOrFun::Module(_) => None,
-                ModuleOrFun::Fun(fun_id) => Some(fun_id),
+                ModuleOrFun::Fun(fun_id, _, _) => Some(fun_id),
             })
             .copied();
 
@@ -2733,7 +2937,11 @@ impl Tokens {
                             .expect("own id should be there")
                             .0
                             .get(&fun.name),
-                        Some(&ModuleOrFun::Fun(FunId::new(module_id, funs.len())))
+                        Some(&ModuleOrFun::Fun(
+                            FunId::new(module_id, funs.len()),
+                            fun.variables.tys(),
+                            fun.ty.clone()
+                        ))
                     );
                     funs.push(fun);
                 }
@@ -2860,7 +3068,6 @@ impl Ast {
 //TODO: Type deduce
 pub fn evaluate_debug(
     expr: Expr,
-    ty: Ty,
     ty2: Ty2,
     mut expressions: Expressions,
 ) -> Result<Constant, RuntimeError> {
@@ -2875,7 +3082,7 @@ pub fn evaluate_debug(
         },
     };
 
-    let main = Fun::new(name.clone(), Variables::new(), ty2, block);
+    let main = Fun::new(name.clone(), Variables::new(), block, ty2);
 
     let main_id = FunId::new(ModuleId(0), 0);
 
@@ -2919,16 +3126,16 @@ fn str_to_list(s: &str) -> Vec<HashableConstant> {
 pub struct Fun {
     name: Word,
     variables: Variables,
-    ty: Ty2,
     body: Block,
+    ty: Ty2,
 }
 impl Fun {
-    fn new(name: Word, variables: Variables, ty: Ty2, body: Block) -> Self {
+    fn new(name: Word, variables: Variables, body: Block, ty: Ty2) -> Self {
         Self {
             name,
             variables,
-            ty,
             body,
+            ty,
         }
     }
 }
@@ -2941,6 +3148,10 @@ struct Variable {
 impl Variable {
     fn new(name: Word, ty2: Ty2) -> Self {
         Self { name, ty2 }
+    }
+
+    fn ty(&self) -> &Ty2 {
+        &self.ty2
     }
 }
 
@@ -3278,6 +3489,8 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
         Some(Token::Return)
     } else if keyword == "List" {
         Some(Token::Ty(TyToken::List))
+    } else if keyword == "String" {
+        Some(Token::Ty(TyToken::String))
     } else if keyword == "Dict" {
         Some(Token::Ty(TyToken::Dict))
     } else if keyword == "int" {
@@ -3371,7 +3584,15 @@ pub mod word {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct GenericTyId(usize);
+pub struct GenericTyId(usize);
+
+static RANDOM: AtomicUsize = AtomicUsize::new(0);
+
+impl GenericTyId {
+    fn random() -> Self {
+        Self(RANDOM.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Ty2 {
@@ -3379,7 +3600,7 @@ pub enum Ty2 {
     Bool,
     None,
     Ty,
-    Callable,
+    Callable(Vec<Ty2>, Box<Ty2>),
     Char,
     Generic(GenericTyId),
     Dict(Box<Ty2>, Box<Ty2>),
@@ -3393,10 +3614,11 @@ impl Ty2 {
 
     fn is_generic(&self) -> bool {
         match self {
-            Ty2::Int | Ty2::Bool | Ty2::None | Ty2::Ty | Ty2::Callable | Ty2::Char => false,
+            Ty2::Int | Ty2::Bool | Ty2::None | Ty2::Ty | Ty2::Char => false,
             Ty2::Generic(_) => true,
             Ty2::Dict(key_ty, value_ty) => key_ty.is_generic() || value_ty.is_generic(),
             Ty2::List(inner_ty) => inner_ty.is_generic(),
+            Ty2::Callable(args, res) => args.iter().any(|arg| arg.is_generic()) || res.is_generic(),
         }
     }
 }
@@ -3464,6 +3686,7 @@ pub enum TyToken {
     Callable,
     None,
     Ty,
+    String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3509,6 +3732,7 @@ impl Display for TyToken {
             TyToken::Callable => write!(f, "Callable"),
             TyToken::None => write!(f, "None"),
             TyToken::Ty => write!(f, "TYPE"),
+            TyToken::String => write!(f, "String"),
         }
     }
 }
@@ -3559,6 +3783,17 @@ pub trait MyItertools: Iterator {
             None
         } else {
             Some(item)
+        }
+    }
+
+    fn collect_nothing(mut self) -> Option<()>
+    where
+        Self: Sized,
+    {
+        if self.next().is_some() {
+            None
+        } else {
+            Some(())
         }
     }
 }

@@ -1,13 +1,13 @@
 
 
 fun main() -> int {
-    val input_string: List = List.from_file("res/aoc/1.txt");
+    val input_string: String = String.from_file("res/aoc/1.txt");
 
-    val number_strings: List = input_string.split_whitespace();
+    val number_strings: List<String> = input_string.split_whitespace();
 
 
-    val left = List.new();
-    val right = List.new();
+    val left = List<int>.new();
+    val right = List<int>.new();
 
 
     for ii, number in number_strings {
