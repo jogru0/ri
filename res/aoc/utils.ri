@@ -267,3 +267,17 @@ fun pow(base: int, exp: int) -> int {
     }
     res
 }
+
+fun digits_of(value: int) -> int {
+    if value == 0 {
+        return 1;
+    }
+    
+    val res = 0;
+    while 0 < value {
+        value -= value % 10;
+        value /= 10;
+        res += 1;
+    } 
+    res
+}

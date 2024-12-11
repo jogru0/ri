@@ -523,6 +523,7 @@ pub enum InternalFun {
     Has,
     Keys,
     DeepClone,
+    UpdateExisting,
 }
 
 impl Display for InternalFun {
@@ -547,6 +548,7 @@ impl Display for InternalFun {
             InternalFun::Keys => write!(f, "keys"),
             InternalFun::DeepClone => write!(f, "deep_clone"),
             InternalFun::Remove => write!(f, "remove"),
+            InternalFun::UpdateExisting => write!(f, "update_existing"),
         }
     }
 }
@@ -572,6 +574,7 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
         "deep_clone".try_into().expect("const") => InternalFun::DeepClone,
         "keys".try_into().expect("const") => InternalFun::Keys,
         "remove".try_into().expect("const") => InternalFun::Remove,
+        "update_existing".try_into().expect("const") => InternalFun::UpdateExisting,
     }
 });
 
@@ -2446,6 +2449,24 @@ impl Modules {
                     };
 
                     return Ok(result);
+                }
+            }
+            InternalFun::UpdateExisting => {
+                if let Some((Constant::Dict(dict), Constant::HashableConstant(key), value)) =
+                    parameters.iter().collect_tuple()
+                {
+                    let mut dict_borrow = dict.borrow_mut();
+
+                    match dict_borrow.entry(key.clone()) {
+                        indexmap::map::Entry::Occupied(mut occupied_entry) => {
+                            *occupied_entry.get_mut() = value.clone()
+                        }
+                        indexmap::map::Entry::Vacant(_) => {
+                            return Err(RuntimeError::KeyDoesNotExist(key.clone()))
+                        }
+                    }
+
+                    return Ok(Constant::default());
                 }
             }
         }

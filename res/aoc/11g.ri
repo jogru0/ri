@@ -1,0 +1,56 @@
+import utils;
+
+fun parse_int(string: List) -> int {
+    string.parse(int)
+}
+
+fun do_step(stones: Dict) -> Dict {
+    val res = Dict.new();
+    for stone in stones.keys() {
+        val quantity = stones.get(stone);
+        if stone == 0 {
+            res.add_stone(1, quantity);
+        } else {
+            val digits = utils::digits_of(stone);
+            if digits % 2 == 0 {
+                val quot = 10.utils::pow(digits / 2);
+                val right = stone % quot;
+                val left = (stone - right) / quot;
+                res.add_stone(left, quantity);
+                res.add_stone(right, quantity);
+            } else {
+                res.add_stone(2024 * stone, quantity);
+            }
+        }
+    }
+    res
+}
+
+fun add_stone(stones: Dict, stone: int, quantity: int) {
+    if stones.has(stone) {
+        stones.update_existing(stone, stones.get(stone) + quantity)
+    } else {
+        stones.set_new(stone, quantity)
+    }
+}
+
+fun main() -> int {
+    val stones_list = List.from_file("res/aoc/11.txt").split_whitespace().utils::map(parse_int);
+
+    val stones = Dict.new();
+    for stone in stones_list {
+        stones.add_stone(stone, 1);
+    }
+
+    val i = 0;
+    while i < 75 {
+        stones = do_step(stones);
+        i += 1;
+    }
+
+    val sum = 0;
+    for stone in stones.keys() {
+        sum += stones.get(stone);
+    }
+    sum
+}

@@ -111,3 +111,13 @@ fn aoc10s() {
 fn aoc10g() {
     run("res/aoc/10g.ri", 1086);
 }
+
+#[test]
+fn aoc11s() {
+    run("res/aoc/11s.ri", 235850);
+}
+
+#[test]
+fn aoc11g() {
+    run("res/aoc/11g.ri", 279903140844645);
+}

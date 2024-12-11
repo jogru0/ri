@@ -1,19 +1,5 @@
 import utils;
 
-fun digits_of(value: int) -> int {
-    if value == 0 {
-        return 1;
-    }
-    
-    val res = 0;
-    while 0 < value {
-        value -= value % 10;
-        value /= 10;
-        res += 1;
-    } 
-    res
-}
-
 fun calculate(problem: List, possibility: int, max: int) -> int {
     val id = 1;
     val end = problem.len();
@@ -27,7 +13,7 @@ fun calculate(problem: List, possibility: int, max: int) -> int {
         } else if choice == 1 {
             current *= next;
         } else {
-            val d = digits_of(next);
+            val d = utils::digits_of(next);
             val factor = 10.utils::pow(d);
             current *= factor;
             current += next;
