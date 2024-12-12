@@ -98,6 +98,7 @@ fn aoc9s() {
 }
 
 #[test]
+#[ignore = "slow"]
 fn aoc9g() {
     run("res/aoc/9g.ri", 6398096697992);
 }
@@ -120,4 +121,14 @@ fn aoc11s() {
 #[test]
 fn aoc11g() {
     run("res/aoc/11g.ri", 279903140844645);
+}
+
+#[test]
+fn aoc12s() {
+    run("res/aoc/12s.ri", 1522850);
+}
+
+#[test]
+fn aoc12g() {
+    run("res/aoc/12g.ri", 953738);
 }

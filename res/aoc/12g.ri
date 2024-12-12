@@ -1,0 +1,117 @@
+import utils;
+
+fun parse_int(string: List) -> int {
+    string.parse(int)
+}
+
+fun get_region(grid: Dict, key: List) -> Dict {
+    val identifier = grid.get(key);
+    val region = Dict.new();
+    val to_check = List.new();
+    to_check.push(key);
+
+    while to_check.len() != 0 {
+        val k = to_check.pop();
+        if (!region.has(k)) && grid.has(k) && grid.get(k) == identifier {
+            region.set_new(k, None);
+            for n in k.utils::neighbors4() {
+                to_check.push(n);
+            }
+        }
+    }
+
+    region
+}
+
+fun area(region: Dict) -> int {
+    region.keys().len()
+}
+
+fun calc_bloat(region: Dict) -> Dict {
+    val bloat = Dict.new();
+    for p in region.keys() {
+        if !bloat.has(p) {
+            bloat.set_new(p, None);
+        }
+        for n in p.utils::neighbors4() {
+            if !bloat.has(n) {
+                bloat.set_new(n, None);
+            }
+        }
+    }
+    bloat
+}
+
+fun sides(region: Dict) -> int {
+    val corners = 0;
+    for p in region.calc_bloat().keys() {
+        val has_p = region.has(p);
+        val has_up = region.has(p.utils::add_point(utils::point(1, 0)));
+        val has_down = region.has(p.utils::add_point(utils::point(-1, 0)));
+        val has_left = region.has(p.utils::add_point(utils::point(0, 1)));
+        val has_right = region.has(p.utils::add_point(utils::point(0, -1)));
+
+        val has_ul = region.has(p.utils::add_point(utils::point(1, 1)));
+        val has_ur = region.has(p.utils::add_point(utils::point(1, -1)));
+        val has_dl = region.has(p.utils::add_point(utils::point(-1, 1)));
+        val has_dr = region.has(p.utils::add_point(utils::point(-1, -1)));
+
+        if has_p {
+            if !has_up && !has_right && !has_ur {
+                corners += 1;
+            }
+            if !has_down && !has_right && !has_dr {
+                corners += 1;
+            }
+            if !has_up && !has_left && !has_ul {
+                corners += 1;
+            }
+            if !has_down && !has_left && !has_dl {
+                corners += 1;
+            }
+        } else {
+            if has_up && has_right {
+                corners += 1;
+            }
+            if has_down && has_right {
+                corners += 1;
+            }
+            if has_up && has_left {
+                corners += 1;
+            }
+            if has_down && has_left {
+                corners += 1;
+            }
+        }
+    }
+    corners
+}
+
+
+fun main() -> int {
+    val grid = List.from_file("res/aoc/12.txt").utils::parse_grid();
+
+    val regions = Dict.new();
+    val n_regions = 0; 
+
+    val done_keys = Dict.new();
+
+    for key in grid.keys() {
+        if !done_keys.has(key) {
+            val region = grid.get_region(key);
+            for k in region.keys() {
+                done_keys.set_new(k, None);
+            }
+            regions.set_new(n_regions, region);
+            n_regions += 1;
+        }
+    }
+
+    val sum = 0;
+    for r_id in regions.keys() {
+        val region = regions.get(r_id);
+        sum += region.area() * region.sides();
+    }
+
+    sum
+}
