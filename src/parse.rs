@@ -513,7 +513,8 @@ impl Display for Callable {
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub enum InternalFun {
-    New,
+    NewList,
+    NewDict,
     Remove,
     Invoke,
     Debug,
@@ -1563,7 +1564,7 @@ impl TokenStream<'_> {
         // //TODO Err flow
         let variable_id = self.stack.get(word).ok();
         let module_or_fun = self.get_module_or_fun(self.module_id, word).ok();
-        let internal_fun = InternalFun::get(word);
+        let internal_fun = InternalFun::get(word, initial_generic_vatiable);
 
         match (variable_id, module_or_fun, internal_fun) {
             (Some(variable_id), None, None) => {
@@ -2542,7 +2543,7 @@ impl Modules {
         variable_values: &mut VariableValues,
     ) -> Result<Constant, RuntimeError> {
         match internal_fun {
-            InternalFun::New => {
+            InternalFun::NewList => {
                 if let Some(Constant::HashableConstant(HashableConstant::Ty(ty))) =
                     parameters.iter().collect_single()
                 {
