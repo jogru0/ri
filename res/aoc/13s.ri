@@ -1,0 +1,55 @@
+import utils;
+
+fun solve(instance: List) -> int {
+    val det = instance.get(0) * instance.get(3) - instance.get(1) * instance.get(2);
+    det / det;
+
+    val a_det = instance.get(4) * instance.get(3) - instance.get(5) * instance.get(2);
+    if a_det % det != 0 {
+        return 0;
+    }
+
+    val b_det = instance.get(0) * instance.get(5) - instance.get(1) * instance.get(4);
+    if b_det % det != 0 {
+        return 0;
+    }
+
+    (3 * a_det + b_det) / det
+}
+
+fun main() -> int {
+    val input_lines = List.from_file("res/aoc/13.txt").lines();
+
+    val instances = List.new();
+    val i = 0;
+    while i < input_lines.len() {
+        val instance = List.new();
+        
+        val a_line = input_lines.get(i);
+        val b_line = input_lines.get(i + 1);
+        val p_line = input_lines.get(i + 2);
+
+        val id = utils::optional(12);
+        instance.push(a_line.utils::parse_num(id).utils::unwrap());
+        id = utils::optional(18);
+        instance.push(a_line.utils::parse_num(id).utils::unwrap());
+        id = utils::optional(12);
+        instance.push(b_line.utils::parse_num(id).utils::unwrap());
+        id = utils::optional(18);
+        instance.push(b_line.utils::parse_num(id).utils::unwrap());
+        id = utils::optional(9);
+        instance.push(p_line.utils::parse_num(id).utils::unwrap());
+        id = utils::optional(id.utils::unwrap() + 4);
+        instance.push(p_line.utils::parse_num(id).utils::unwrap());
+
+        instances.push(instance);
+
+        i += 4;
+    }
+
+    val sum = 0;
+    for instance in instances {
+        sum += instance.solve();
+    }
+    sum
+}
