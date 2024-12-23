@@ -1,0 +1,68 @@
+import utils;
+
+fun state(pos: List, dir: List) -> List {
+    val st = List.new();
+    st.push(pos);
+    st.push(dir);
+    st
+}
+
+fun main() -> int {
+    val grid = List.from_file("res/aoc/16.txt").utils::parse_grid();
+
+    val start_pos = grid.utils::extract_pos('S');
+    val start_dir = utils::point(1, 0);
+
+    val end_pos = grid.utils::extract_pos('E');
+    
+    val number_buckets = 1000; 
+    val buckets = List.new();
+    val i = 0;
+    while i < number_buckets {
+        buckets.push(List.new());
+        i += 1;
+    }
+    buckets.get(0).push(state(start_pos, start_dir));
+
+    val current_distance = 0;
+    val done = Dict.new();
+    while true {
+        val bucket_id = current_distance % 1000;
+        val current_bucket = buckets.get(bucket_id);
+        buckets.set(bucket_id, List.new());
+
+        for st in current_bucket {
+            if !done.has(st) {
+                done.set_new(st, None);
+                
+                val pos = st.get(0);
+                val dir = st.get(1);
+
+                if pos == end_pos {
+                    return current_distance;
+                }
+
+                val next_pos = utils::add_point(pos, dir);
+                if grid.get(next_pos) != '#' {
+                    buckets.get((current_distance + 1) % 1000).push(state(utils::add_point(pos, dir), dir));
+                }
+
+                val other_dirs = List.new();
+                if dir == utils::point(1, 0) || dir == utils::point(-1, 0) {
+                    other_dirs.push(utils::point(0, 1));
+                    other_dirs.push(utils::point(0, -1));
+                }
+                if dir == utils::point(0, 1) || dir == utils::point(0, -1) {
+                    other_dirs.push(utils::point(1, 0));
+                    other_dirs.push(utils::point(-1, 0));
+                }
+
+                for other_dir in other_dirs {
+                    buckets.get((current_distance + 1000) % 1000).push(state(pos, other_dir));
+                }
+            }
+        }
+
+        current_distance += 1;
+    }
+}

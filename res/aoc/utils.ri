@@ -6,6 +6,29 @@ fun map(list: List, callable: Callable) -> List {
     result
 }
 
+
+fun extract_all_pos(grid: Dict, c: char) -> List {
+    val res = List.new();
+    for key in grid.keys() {
+        if grid.get(key) == c {
+            res.push(key);
+        }
+    }
+    res
+}
+
+fun extract_pos(grid: Dict, c: char) -> List {
+    val res = grid.extract_all_pos(c);
+    
+    if res.len () != 1 {
+        "did not find unique element".debug();
+        c.debug();
+        0 / 0
+    }
+
+    res.get(0)
+}
+
 fun max(lhs: int, rhs: int) -> int {
     if lhs < rhs {
         rhs

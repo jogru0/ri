@@ -1,0 +1,128 @@
+import utils;
+
+fun state(pos: List, dir: List) -> List {
+    val st = List.new();
+    st.push(pos);
+    st.push(dir);
+    st
+}
+
+fun eval_done(done: Dict, final_states: List) -> int {
+    val queued = Dict.new();
+    val queue = List.new();
+
+    val positions = Dict.new();
+
+    for st in final_states {
+        if !queued.has(st) {
+            queued.set_new(st, None);
+            queue.push(st);
+        }
+    }
+
+    while queue.len() != 0 {
+        val s = queue.pop();
+        val position = s.get(0);
+        if !positions.has(position) {
+            positions.set_new(position, None);
+        }
+        val prev = done.get(s).get(1);
+        for p in prev {
+            if !queued.has(p) {
+                queued.set_new(p, None);
+                queue.push(p);
+            }
+        }
+    }
+    
+    positions.keys().len()
+}
+
+fun main() -> int {
+    val grid = List.from_file("res/aoc/16.txt").utils::parse_grid();
+
+    val start_pos = grid.utils::extract_pos('S');
+    val start_dir = utils::point(1, 0);
+
+    val end_pos = grid.utils::extract_pos('E');
+    
+    val number_buckets = 1000; 
+    val buckets = List.new();
+    val i = 0;
+    while i < number_buckets {
+        buckets.push(List.new());
+        i += 1;
+    }
+
+    val initial = List.new();
+    initial.push(state(start_pos, start_dir));
+    buckets.get(0).push(initial);
+
+    val current_distance = 0;
+    val done = Dict.new();
+    while true {
+
+        val final_states = List.new();
+
+        val bucket_id = current_distance % 1000;
+        val current_bucket = buckets.get(bucket_id);
+        buckets.set(bucket_id, List.new());
+
+        for st_and_from in current_bucket {
+            val st = st_and_from.get(0);
+            if done.has(st) {
+                val entry = done.get(st);
+                if entry.get(0) == current_distance {
+                    entry.get(1).push(st_and_from.get(1));
+                }
+            } else {
+                val entry = List.new();
+                entry.push(current_distance);
+                val prev = List.new();
+                if current_distance != 0 {
+                    prev.push(st_and_from.get(1))
+                }
+                entry.push(prev);
+                done.set_new(st, entry);
+                
+                val pos = st.get(0);
+                val dir = st.get(1);
+
+                if pos == end_pos {
+                    final_states.push(st);
+                } else {
+                    val next_pos = utils::add_point(pos, dir);
+                    if grid.get(next_pos) != '#' {
+                        val nnn = List.new();
+                        nnn.push(state(utils::add_point(pos, dir), dir));
+                        nnn.push(st);
+                        buckets.get((current_distance + 1) % 1000).push(nnn);
+                    }
+
+                    val other_dirs = List.new();
+                    if dir == utils::point(1, 0) || dir == utils::point(-1, 0) {
+                        other_dirs.push(utils::point(0, 1));
+                        other_dirs.push(utils::point(0, -1));
+                    }
+                    if dir == utils::point(0, 1) || dir == utils::point(0, -1) {
+                        other_dirs.push(utils::point(1, 0));
+                        other_dirs.push(utils::point(-1, 0));
+                    }
+
+                    for other_dir in other_dirs {
+                        val nnn = List.new();
+                        nnn.push(state(pos, other_dir));
+                        nnn.push(st);
+                        buckets.get((current_distance + 1000) % 1000).push(nnn);
+                    }
+                }
+            }
+        }
+
+        if final_states.len() != 0 {
+            return done.eval_done(final_states);
+        }
+
+        current_distance += 1;
+    }
+}

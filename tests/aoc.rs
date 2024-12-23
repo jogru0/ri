@@ -162,3 +162,13 @@ fn aoc15s() {
 fn aoc15g() {
     run("res/aoc/15g.ri", 1404917);
 }
+
+#[test]
+fn aoc16s() {
+    run("res/aoc/16s.ri", 99488);
+}
+
+#[test]
+fn aoc16g() {
+    run("res/aoc/16g.ri", 516);
+}
