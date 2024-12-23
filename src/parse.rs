@@ -524,6 +524,7 @@ pub enum InternalFun {
     Keys,
     DeepClone,
     UpdateExisting,
+    Xor,
 }
 
 impl Display for InternalFun {
@@ -549,6 +550,7 @@ impl Display for InternalFun {
             InternalFun::DeepClone => write!(f, "deep_clone"),
             InternalFun::Remove => write!(f, "remove"),
             InternalFun::UpdateExisting => write!(f, "update_existing"),
+            InternalFun::Xor => write!(f, "xor"),
         }
     }
 }
@@ -575,6 +577,7 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
         "keys".try_into().expect("const") => InternalFun::Keys,
         "remove".try_into().expect("const") => InternalFun::Remove,
         "update_existing".try_into().expect("const") => InternalFun::UpdateExisting,
+        "xor".try_into().expect("const") => InternalFun::Xor,
     }
 });
 
@@ -2467,6 +2470,21 @@ impl Modules {
                     }
 
                     return Ok(Constant::default());
+                }
+            }
+            InternalFun::Xor => {
+                if let Some((
+                    Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                        PrimitiveConstant::Int(i),
+                    )),
+                    Constant::HashableConstant(HashableConstant::PrimitiveConstant(
+                        PrimitiveConstant::Int(j),
+                    )),
+                )) = parameters.iter().collect_tuple()
+                {
+                    let IntConstant::Small(i) = i;
+                    let IntConstant::Small(j) = j;
+                    return Ok((i ^ j).into());
                 }
             }
         }

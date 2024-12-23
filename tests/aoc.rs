@@ -1,6 +1,8 @@
+use std::fmt::Display;
+
 use assert_cmd::Command;
 
-fn run(file: &str, expected: i128) {
+fn run(file: &str, expected: impl Display) {
     let mut cmd = Command::cargo_bin("ri").unwrap();
 
     cmd.arg(file)
@@ -73,13 +75,13 @@ fn aoc6g() {
 
 #[test]
 fn aoc7s() {
-    run("res/aoc/7s.ri", 2437272016585);
+    run("res/aoc/7s.ri", 2437272016585i64);
 }
 
 #[test]
 #[ignore = "slow"]
 fn aoc7g() {
-    run("res/aoc/7g.ri", 162987117690649);
+    run("res/aoc/7g.ri", 162987117690649i64);
 }
 
 #[test]
@@ -94,13 +96,13 @@ fn aoc8g() {
 
 #[test]
 fn aoc9s() {
-    run("res/aoc/9s.ri", 6370402949053);
+    run("res/aoc/9s.ri", 6370402949053i64);
 }
 
 #[test]
 #[ignore = "slow"]
 fn aoc9g() {
-    run("res/aoc/9g.ri", 6398096697992);
+    run("res/aoc/9g.ri", 6398096697992i64);
 }
 
 #[test]
@@ -120,7 +122,7 @@ fn aoc11s() {
 
 #[test]
 fn aoc11g() {
-    run("res/aoc/11g.ri", 279903140844645);
+    run("res/aoc/11g.ri", 279903140844645i64);
 }
 
 #[test]
@@ -140,7 +142,7 @@ fn aoc13s() {
 
 #[test]
 fn aoc13g() {
-    run("res/aoc/13g.ri", 82570698600470);
+    run("res/aoc/13g.ri", 82570698600470i64);
 }
 
 #[test]
@@ -171,4 +173,15 @@ fn aoc16s() {
 #[test]
 fn aoc16g() {
     run("res/aoc/16g.ri", 516);
+}
+
+#[test]
+fn aoc17s() {
+    run("res/aoc/17s.ri", "[1, 5, 7, 4, 1, 6, 0, 3, 0, ]");
+}
+
+#[test]
+#[ignore = "slow"]
+fn aoc17g() {
+    run("res/aoc/17g.ri", 108107574778365i64);
 }
