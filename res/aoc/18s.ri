@@ -1,0 +1,48 @@
+import utils;
+
+fun main() -> int {
+    val input_lines = List.from_file("res/aoc/18.txt").lines();
+
+    val corrupted = Dict.new();
+    val i = 0;
+    while i < 1024 {
+        corrupted.set_new(input_lines.get(i).utils::parse_numbers_in_line(), None);
+        i += 1;
+    }
+
+    val max_x = 71;
+    val max_y = 71;
+    val start = utils::point(0, 0);
+    val goal = utils::point(max_x - 1, max_y - 1);
+
+    val queue = List.new();
+    queue.push(start);
+
+    val visited = Dict.new();
+    val distance_so_far = 0;
+    while true {
+        val todo = queue;
+        queue = List.new();
+
+        while todo.len() != 0 {
+            val p = todo.pop();
+            if !visited.has(p) {
+                visited.set_new(p, None);
+
+                if p == goal {
+                    return distance_so_far;
+                }
+
+                for q in p.utils::neighbors4() {
+                    val x = q.get(0);
+                    val y = q.get(1);
+                    if 0 <= x && x < max_x &&  0 <= y && y < max_y && !corrupted.has(q) {
+                        queue.push(q);
+                    } 
+                }
+            }
+        }
+
+        distance_so_far += 1;
+    }
+}

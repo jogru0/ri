@@ -185,3 +185,14 @@ fn aoc17s() {
 fn aoc17g() {
     run("res/aoc/17g.ri", 108107574778365i64);
 }
+
+#[test]
+fn aoc18s() {
+    run("res/aoc/18s.ri", 308);
+}
+
+#[test]
+#[ignore = "slow"]
+fn aoc18g() {
+    run("res/aoc/18g.ri", "[46, 28, ]");
+}
