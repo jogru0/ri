@@ -238,9 +238,13 @@ fun has_cycles(graph: Dict) -> bool {
 }
 
 fun parse_grid(input_string: List) -> Dict {
+    parse_grid_lines(input_string.lines())
+}
+
+fun parse_grid_lines(input_lines: List) -> Dict {
     val result = Dict.new();
 
-    for y, line in input_string.lines() {
+    for y, line in input_lines {
         for x, c in line {
             val key = point(x, y);
             result.set_new(key, c); 

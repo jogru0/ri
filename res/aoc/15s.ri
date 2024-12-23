@@ -1,0 +1,101 @@
+import utils;
+
+fun to_dir(move: char) -> List {
+    if move == '^' {
+        return utils::point(0, -1);
+    }
+
+    if move == 'v' {
+        return utils::point(0, 1);
+    }
+
+    if move == '<' {
+        return utils::point(-1, 0);
+    }
+
+    if move == '>' {
+        return utils::point(1, 0);
+    }
+
+    0 / 0
+}
+
+fun do_move(grid: Dict, pos: List, move: char) -> List {
+    val dir = move.to_dir();
+
+    val target = utils::add_point(pos, dir);
+
+    if grid.get(target) == '.' {
+        return target;
+    }
+
+    val to_check = target;
+    while true {
+        val next = grid.get(to_check);
+        
+        if next == '#' {
+            return pos;
+        }
+        
+        if next == '.' {
+            grid.update_existing(target, '.');
+            grid.update_existing(to_check, 'O');
+            return target;
+        }
+
+        to_check = utils::add_point(to_check, dir);
+    }
+}
+
+fun extract_pos(grid: Dict) -> List {
+    for p in grid.keys() {
+        if grid.get(p) == '@' {
+            grid.update_existing(p, '.');
+            return p;
+        }
+    }
+}
+
+fun score_boxes(grid: Dict) -> int {
+    val sum = 0;
+    for p in grid.keys() {
+        if grid.get(p) == 'O' {
+            sum += p.get(0) + 100 * p.get(1);
+        }
+    }
+    sum
+}
+
+fun main() -> int {
+    val input_lines = List.from_file("res/aoc/15.txt").lines();
+
+    val i = 0;
+    while input_lines.get(i).len() != 0 {
+        i += 1
+    };
+
+    val grid_lines = List.new();
+    val j = 0;
+    while j < i {
+        grid_lines.push(input_lines.get(j));
+        j += 1;
+    }
+    val grid = grid_lines.utils::parse_grid_lines();
+
+    val moves = List.new();
+    while i < input_lines.len() {
+        for move in input_lines.get(i) {
+            moves.push(move);
+        }
+        
+        i += 1;
+    }
+
+    val pos = grid.extract_pos();
+    
+    for move in moves {
+        pos = grid.do_move(pos, move);
+    }
+
+    grid.score_boxes()
+}
