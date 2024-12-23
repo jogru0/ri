@@ -348,7 +348,7 @@ impl Rem for IntConstant {
     fn rem(self, other: Self) -> Self::Output {
         match (self, other) {
             (IntConstant::Small(lhs), IntConstant::Small(rhs)) => lhs
-                .checked_rem(rhs)
+                .checked_rem_euclid(rhs)
                 .ok_or(RuntimeError::NotImplememted("numbers beyond i128".into()))
                 .map(Self::Small),
         }

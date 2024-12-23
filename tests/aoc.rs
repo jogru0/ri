@@ -142,3 +142,13 @@ fn aoc13s() {
 fn aoc13g() {
     run("res/aoc/13g.ri", 82570698600470);
 }
+
+#[test]
+fn aoc14s() {
+    run("res/aoc/14s.ri", 230436441);
+}
+
+#[test]
+fn aoc14g() {
+    run("res/aoc/14g.ri", 8270);
+}

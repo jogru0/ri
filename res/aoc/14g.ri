@@ -1,0 +1,32 @@
+import utils;
+
+fun check_for_tree(robots: List, seconds: int) -> bool {
+    val xmax = 101;
+    val ymax = 103;
+
+    val d = Dict.new();
+    
+    for robot in robots {
+        val x = (robot.get(0) + seconds * robot.get(2)) % xmax;
+        val y = (robot.get(1) + seconds * robot.get(3)) % ymax;
+        val p = utils::point(x, y);
+        if d.has(p) {
+            return false;
+        }
+        d.set_new(p, None);
+    }
+
+    true
+}
+
+fun main() -> int {
+    val robots = List.from_file("res/aoc/14.txt").lines().utils::map(utils::parse_numbers_in_line);
+
+    val s = 0;
+    while true {
+        if robots.check_for_tree(s) {
+            return s;
+        }
+        s += 1;
+    }
+}

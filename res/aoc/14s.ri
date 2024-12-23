@@ -1,0 +1,40 @@
+import utils;
+
+fun main() -> int {
+    val robots = List.from_file("res/aoc/14.txt").lines().utils::map(utils::parse_numbers_in_line);
+
+    val xmax = 101;
+    val ymax = 103;
+
+    val xmid = (xmax - 1) / 2;
+    val ymid = (ymax - 1) / 2;
+
+    val tr = 0;
+    val br = 0;
+    val tl = 0;
+    val bl = 0;
+
+    for robot in robots {
+        val x = (robot.get(0) + 100 * robot.get(2)) % xmax;
+        val y = (robot.get(1) + 100 * robot.get(3)) % ymax;
+
+        if x < xmid {
+            if y < ymid {
+                tl += 1;
+            }
+            if y > ymid {
+                bl += 1;
+            }
+        }
+        if x > xmid {
+            if y < ymid {
+                tr += 1;
+            }
+            if y > ymid {
+                br += 1;
+            }
+        }
+    }
+
+    bl * br * tl * tr
+}
