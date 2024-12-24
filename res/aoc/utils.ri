@@ -341,3 +341,43 @@ fun digits_of(value: int) -> int {
     } 
     res
 }
+
+fun has_substring_at(super: List, sup: List, at: int) -> bool {
+    val sup_size = sup.len();
+
+    if super.len() < sup_size + at {
+        return false;
+    }
+
+    val j = 0;
+    while j < sup_size {
+        if super.get(at + j) != sup.get(j) {
+            return false;
+        }
+
+        j += 1;
+    }
+
+    true
+}
+
+fun split_at_sub(line: List, split: List) -> List {
+    val line_size = line.len();
+    val split_size = split.len();
+
+    val next = List.new();
+    val result = List.new();
+    val i = 0;
+    while i < line_size {
+        if line.has_substring_at(split, i) {
+            i += split_size;
+            result.push(next);
+            next = List.new();
+        } else {
+            next.push(line.get(i));
+            i += 1;
+        }
+    }
+    result.push(next);
+    result
+}

@@ -1,0 +1,61 @@
+import utils;
+
+fun is_possible_impl(word: List, prefixes: List, memo: Dict) -> bool {
+    val word_len = word.len();
+    
+    if word_len == 0 {
+        return true;
+    }
+
+    for prefix in prefixes {
+        if word.utils::has_substring_at(prefix, 0) {
+            val rest = List.new();
+            val i = prefix.len();
+            while i < word.len() {
+                rest.push(word.get(i));
+                i += 1;
+            }
+
+            if rest.is_possible(prefixes, memo) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fun is_possible(word: List, prefixes: List, memo: Dict) -> bool {
+    if memo.has(word) {
+        return memo.get(word);
+    }
+
+    val result = is_possible_impl(word, prefixes, memo);
+    memo.set_new(word, result);
+    result
+}
+
+fun main() -> int {
+    val input_lines = List.from_file("res/aoc/19.txt").lines();
+
+    val prefix_line = input_lines.get(0);
+
+    val prefixes = prefix_line.utils::split_at_sub(", ");
+
+    val words = List.new();
+    val i = 2;
+    while i < input_lines.len() {
+        words.push(input_lines.get(i));
+        i += 1;
+    }
+
+    val sum = 0;
+    val memo = Dict.new();
+    for word in words {
+        if word.is_possible(prefixes, memo) {
+            sum += 1;
+        }
+    }
+
+    sum
+}
