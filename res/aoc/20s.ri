@@ -1,0 +1,48 @@
+import utils;
+
+fun extract_pos(grid: Dict, c: char) -> List {
+    for p in grid.keys() {
+        if grid.get(p) == c {
+            grid.update_existing(p, '.');
+            return p;
+        }
+    }
+}
+
+fun main() -> int {
+    val grid = List.from_file("res/aoc/20.txt").utils::parse_grid();
+
+    val start = grid.extract_pos('S');
+    val goal = grid.extract_pos('E');
+
+    val path = Dict.new();
+
+    val current = start;
+    val step = 0;
+    path.set_new(current, step);
+    while current != goal {
+        for n in current.utils::neighbors4() {
+            if !path.has(n) && grid.get(n) == '.' {
+                current = n;
+            }
+        }
+
+        step += 1;
+        path.set_new(current, step);
+    }
+
+
+    val sum = 0;
+    for p in path.keys() {
+        val to_reach = path.get(p) + 102;
+        for one in p.utils::neighbors4() {
+            for two in one.utils::neighbors4() {
+                if path.has(two) && to_reach <= path.get(two) {
+                    sum += 1;
+                }
+            }
+        }
+    }
+    
+    sum
+}

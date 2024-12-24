@@ -206,3 +206,13 @@ fn aoc19s() {
 fn aoc19g() {
     run("res/aoc/19g.ri", 848076019766013i64);
 }
+
+#[test]
+fn aoc20s() {
+    run("res/aoc/20s.ri", 1358);
+}
+
+#[test]
+fn aoc20g() {
+    run("res/aoc/20g.ri", 1005856);
+}

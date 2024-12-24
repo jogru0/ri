@@ -1,0 +1,85 @@
+import utils;
+
+fun extract_pos(grid: Dict, c: char) -> List {
+    for p in grid.keys() {
+        if grid.get(p) == c {
+            grid.update_existing(p, '.');
+            return p;
+        }
+    }
+}
+
+fun points_with_distance(p: List, dist: int) -> List {
+    val result = List.new();
+
+    val i = 1;
+    while i < dist {
+        val a = utils::point(i, dist - i);
+        val b = utils::point(i, -(dist - i));
+        val c = utils::point(-i, dist - i);
+        val d = utils::point(-i, -(dist - i));
+        
+        result.push(utils::add_point(p, a));
+        result.push(utils::add_point(p, b));
+        result.push(utils::add_point(p, c));
+        result.push(utils::add_point(p, d));
+        
+        i += 1;
+    }
+
+    val aa = utils::point(0, dist);
+    val bb = utils::point(0, -dist);
+    val cc = utils::point(dist, 0);
+    val dd = utils::point(-dist, 0);
+
+    result.push(utils::add_point(p, aa));
+    result.push(utils::add_point(p, bb));
+    result.push(utils::add_point(p, cc));
+    result.push(utils::add_point(p, dd));
+    
+    result
+}
+
+fun main() -> int {
+    val grid = List.from_file("res/aoc/20.txt").utils::parse_grid();
+
+    val start = grid.extract_pos('S');
+    val goal = grid.extract_pos('E');
+
+    val path = Dict.new();
+
+    val current = start;
+    val step = 0;
+    path.set_new(current, step);
+    while current != goal {
+        for n in current.utils::neighbors4() {
+            if !path.has(n) && grid.get(n) == '.' {
+                current = n;
+            }
+        }
+
+        step += 1;
+        path.set_new(current, step);
+    }
+
+
+    val sum = 0;
+    for p in path.keys() {
+        val start_time = path.get(p);
+
+        val dist = 2;
+        while dist <= 20 {
+            val to_reach = start_time + 100 + dist;
+            
+            for q in p.points_with_distance(dist) {
+                 if path.has(q) && to_reach <= path.get(q) {
+                    sum += 1;
+                }
+            }
+
+            dist += 1;
+        }
+    }
+    
+    sum
+}
