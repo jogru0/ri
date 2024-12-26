@@ -1,6 +1,5 @@
 import utils;
 
-
 fun create_state(kp0: List, kp1: List, kp2: List, done: int) -> List {
     val res = List.new();
     res.push(kp0);

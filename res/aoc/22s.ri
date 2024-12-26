@@ -1,0 +1,35 @@
+import utils;
+
+fun hash(code: int) -> int {
+    code xor= code * 64;
+    code %= 16777216;
+
+    code xor= (code - code % 32) / 32;
+    code %= 16777216;
+
+    code xor= code * 2048;
+    code %= 16777216;
+
+    code
+}
+
+fun apply_hash_n_times(code: int, n: int) -> int {
+    val i = 0;
+    while i < n {
+        code = code.hash();
+        i += 1;
+    }
+
+    code
+}
+
+fun main() -> int {
+    val initial_codes = List.from_file("res/aoc/22.txt").lines().utils::map(utils::parse_int);
+  
+    val sum = 0;
+    for code in initial_codes {
+        sum += code.apply_hash_n_times(2000); 
+    }
+
+    sum
+}

@@ -1,0 +1,78 @@
+import utils;
+
+fun hash(code: int) -> int {
+    code xor= code * 64;
+    code %= 16777216;
+
+    code xor= (code - code % 32) / 32;
+    code %= 16777216;
+
+    code xor= code * 2048;
+    code %= 16777216;
+
+    code
+}
+
+fun get_price_list(code: int) -> List {
+    val i = 0;
+    val res = List.new();
+    res.push(code % 10);
+    while i < 2000 {
+        code = code.hash();
+        res.push(code % 10);
+        i += 1;
+    }
+
+    res
+}
+
+
+
+fun evaluate_price_list(price_list: List, scores: Dict) {
+    val done_lookups = Dict.new();    
+    
+    val i_end = price_list.len() - 4;
+    val i = 0;
+    while i < i_end {
+        val p0 = price_list.get(i);
+        val p1 = price_list.get(i + 1);
+        val p2 = price_list.get(i + 2);
+        val p3 = price_list.get(i + 3);
+        val p4 = price_list.get(i + 4);
+
+        val lookup = List.new();
+        lookup.push(p1 - p0);
+        lookup.push(p2 - p1);
+        lookup.push(p3 - p2);
+        lookup.push(p4 - p3);
+
+        if !done_lookups.has(lookup) {
+            done_lookups.set_new(lookup, None);
+
+            if scores.has(lookup) {
+                scores.update_existing(lookup, scores.get(lookup) + p4);
+            } else {
+                scores.set_new(lookup, p4);
+            }
+        }
+
+        i += 1;
+    }
+}
+
+fun main() -> int {
+    val initial_codes = List.from_file("res/aoc/22.txt").lines().utils::map(utils::parse_int);
+  
+    val price_lists = initial_codes.utils::map(get_price_list);
+
+    val scores = Dict.new();
+    for price_list in price_lists {
+        price_list.evaluate_price_list(scores);
+    }
+
+    val m = -1;
+    for key in scores.keys() {
+        m utils::max= scores.get(key);
+    }
+    m
+}

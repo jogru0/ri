@@ -227,3 +227,14 @@ fn aoc21s() {
 fn aoc21g() {
     run("res/aoc/21g.ri", 228800606998554i64);
 }
+
+#[test]
+fn aoc22s() {
+    run("res/aoc/22s.ri", 19927218456i64);
+}
+
+#[test]
+#[ignore = "slow"]
+fn aoc22g() {
+    run("res/aoc/22g.ri", 2189);
+}

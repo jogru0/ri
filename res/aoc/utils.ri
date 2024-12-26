@@ -41,6 +41,10 @@ fun concat_inplace(lhs: List, rhs: List) {
     }
 }
 
+fun parse_int(string: List) -> int {
+    string.parse(int)
+}
+
 fun max(lhs: int, rhs: int) -> int {
     if lhs < rhs {
         rhs
