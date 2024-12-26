@@ -29,8 +29,28 @@ fun extract_pos(grid: Dict, c: char) -> List {
     res.get(0)
 }
 
+fun concat(lhs: List, rhs: List) -> List {
+    val res = lhs.deep_clone();
+    res.concat_inplace(rhs);
+    res
+}
+
+fun concat_inplace(lhs: List, rhs: List) {
+    for c in rhs {
+        lhs.push(c);
+    }
+}
+
 fun max(lhs: int, rhs: int) -> int {
     if lhs < rhs {
+        rhs
+    } else {
+        lhs
+    }
+}
+
+fun min(lhs: int, rhs: int) -> int {
+    if rhs < lhs {
         rhs
     } else {
         lhs

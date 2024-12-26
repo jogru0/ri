@@ -213,6 +213,17 @@ fn aoc20s() {
 }
 
 #[test]
+#[ignore = "slow"]
 fn aoc20g() {
     run("res/aoc/20g.ri", 1005856);
+}
+
+#[test]
+fn aoc21s() {
+    run("res/aoc/21s.ri", 184718);
+}
+
+#[test]
+fn aoc21g() {
+    run("res/aoc/21g.ri", 228800606998554i64);
 }

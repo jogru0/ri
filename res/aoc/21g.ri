@@ -1,0 +1,241 @@
+import utils;
+
+fun keypad_pos(c: char) -> List {
+    if c == '7' {
+        return utils::point(0, 0);
+    }
+    if c == '8' {
+        return utils::point(1, 0);
+    }
+    if c == '9' {
+        return utils::point(2, 0);
+    }
+    if c == '4' {
+        return utils::point(0, 1);
+    }
+    if c == '5' {
+        return utils::point(1, 1);
+    }
+    if c == '6' {
+        return utils::point(2, 1);
+    }
+    if c == '1' {
+        return utils::point(0, 2);
+    }
+    if c == '2' {
+        return utils::point(1, 2);
+    }
+    if c == '3' {
+        return utils::point(2, 2);
+    }
+    if c == '0' {
+        return utils::point(1, 3);
+    }
+    if c == 'A' {
+        return utils::point(2, 3);
+    }
+
+    c.debug();
+}
+
+fun dirpad_pos(c: char) -> List {
+    if c == '<' {
+        return utils::point(0, 1);
+    }
+    if c == '>' {
+        return utils::point(2, 1);
+    }
+    if c == 'v' {
+        return utils::point(1, 1);
+    }
+    if c == '^' {
+        return utils::point(1, 0);
+    }
+    if c == 'A' {
+        return utils::point(2, 0);
+    }
+
+    c.debug();
+}
+
+fun from_to_impl(p: List, q: List, is_keypad: bool) -> List {
+    val x_diff = q.get(0) - p.get(0);
+    val y_diff = q.get(1) - p.get(1);
+
+    val x_moves = List.new();
+    if x_diff < 0 {
+        val i = 0;
+        while i < -x_diff {
+            x_moves.push('<');
+            i += 1;
+        }
+    }  else {
+        val i = 0;
+        while i < x_diff {
+            x_moves.push('>');
+            i += 1;
+        }
+    }
+
+    val y_moves = List.new();
+    if y_diff < 0 {
+        val i = 0;
+        while i < -y_diff {
+            y_moves.push('^');
+            i += 1;
+        }
+    } else {
+        val i = 0;
+        while i < y_diff {
+            y_moves.push('v');
+            i += 1;
+        }
+    }
+
+    if is_keypad {
+        if p.get(0) == 0 && q.get(1) == 3 {
+            return x_moves.utils::concat(y_moves).utils::concat("A");
+        } else if p.get(1) == 3 && q.get(0) == 0 {
+            return y_moves.utils::concat(x_moves).utils::concat("A");
+        }
+    } else {
+        if p.get(0) == 0 && q.get(1) == 0 {
+            return x_moves.utils::concat(y_moves).utils::concat("A");
+        } else if p.get(1) == 0 && q.get(0) == 0 {
+            return y_moves.utils::concat(x_moves).utils::concat("A");    
+        }
+    }
+   
+    if x_diff == 0 {
+        return y_moves.utils::concat("A");
+    } else if y_diff == 0 {
+        return x_moves.utils::concat("A");
+    } else if x_diff > 0 {
+        return y_moves.utils::concat(x_moves).utils::concat("A");
+    } else {
+        return x_moves.utils::concat(y_moves).utils::concat("A");
+    }
+}
+
+fun from_to(from: char, to:char) -> List {
+    val s = List.new();
+    s.push(from);
+    s.push(to);
+    s
+}
+
+fun from_to_keypad() -> Dict {
+    val keyss = "0123456789A";
+
+    val res = Dict.new();
+    for from in keyss {
+        for to in keyss {
+            val p = from.keypad_pos();
+            val q = to.keypad_pos();
+            res.set_new(from_to(from, to), from_to_impl(p, q, true));
+        }
+    }
+    res
+}
+
+fun from_to_dirpad() -> Dict {
+    val keyss = "<>v^A";
+
+    val res = Dict.new();
+    for from in keyss {
+        for to in keyss {
+            val p = from.dirpad_pos();
+            val q = to.dirpad_pos();
+            res.set_new(from_to(from, to), from_to_impl(p, q, false));
+        }
+    }
+    res
+}
+
+fun sequence_length_impl(code_in: List, moves: Dict, depth: int, memo: Dict) -> int {
+    if depth == 0 {
+        return code_in.len();
+    }
+    
+    val code = "A".utils::concat(code_in);
+    
+    val result = 0;
+    val i = 0;
+    val code_end = code.len() - 1;
+    while i < code_end {
+        val move = moves.get(from_to(code.get(i), code.get(i + 1)));
+        result += sequence_length(move, moves, depth - 1, memo);
+        i += 1;
+    }
+
+    result
+}
+
+fun sequence_length(code: List, moves: Dict, depth: int, memo: Dict) -> int {
+    val lookup = List.new();
+    lookup.push(code);
+    lookup.push(depth);
+
+    if memo.has(lookup) {
+        return memo.get(lookup);
+    }
+
+    val result = sequence_length_impl(code, moves, depth, memo);
+    memo.set_new(lookup, result);
+    result
+}
+
+fun generate_sequences(code_in: List, moves: Dict) -> List {
+    val code = "A".utils::concat(code_in);
+    val code_end = code.len() - 1;
+    
+    val result = List.new();
+
+    val i = 0;
+    while i < code_end {
+        val move = moves.get(from_to(code.get(i), code.get(i + 1)));
+        utils::concat_inplace(result, move);
+        i += 1;
+    }
+
+    result
+}
+
+fun main() -> int {
+    val codes = List.from_file("res/aoc/21.txt").lines();
+
+    val num_keypad = Dict.new();
+    num_keypad.set_new(utils::point(0, 0), '7');
+    num_keypad.set_new(utils::point(1, 0), '8');
+    num_keypad.set_new(utils::point(2, 0), '9');
+    num_keypad.set_new(utils::point(0, 1), '4');
+    num_keypad.set_new(utils::point(1, 1), '5');
+    num_keypad.set_new(utils::point(2, 1), '6');
+    num_keypad.set_new(utils::point(0, 2), '1');
+    num_keypad.set_new(utils::point(1, 2), '2');
+    num_keypad.set_new(utils::point(2, 2), '3');
+    num_keypad.set_new(utils::point(1, 3), '0');
+    num_keypad.set_new(utils::point(2, 3), 'A');
+
+    val dir_keypad = Dict.new();
+    dir_keypad.set_new(utils::point(1, 0), '^');
+    dir_keypad.set_new(utils::point(2, 0), 'A');
+    dir_keypad.set_new(utils::point(0, 1), '<');
+    dir_keypad.set_new(utils::point(1, 1), 'v');
+    dir_keypad.set_new(utils::point(2, 1), '>');
+
+    val keypad_moves = from_to_keypad();
+
+    val moves = from_to_dirpad();
+
+    val memo = Dict.new();
+
+    val sum = 0;
+    for code in codes {
+        val seq = code.generate_sequences(keypad_moves);
+        val leng = seq.sequence_length(moves, 25, memo);
+        sum += leng * code.utils::parse_num(utils::optional(0)).utils::unwrap();  
+    }
+
+    sum
+}
