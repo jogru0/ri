@@ -524,6 +524,7 @@ pub enum InternalFun {
     Keys,
     DeepClone,
     UpdateExisting,
+    Intersection,
     Xor,
 }
 
@@ -551,6 +552,7 @@ impl Display for InternalFun {
             InternalFun::Remove => write!(f, "remove"),
             InternalFun::UpdateExisting => write!(f, "update_existing"),
             InternalFun::Xor => write!(f, "xor"),
+            InternalFun::Intersection => write!(f, "intersection"),
         }
     }
 }
@@ -578,6 +580,7 @@ static WORD_INTERNAL_FUN_MAP: LazyLock<IndexMap<Word, InternalFun>> = LazyLock::
         "remove".try_into().expect("const") => InternalFun::Remove,
         "update_existing".try_into().expect("const") => InternalFun::UpdateExisting,
         "xor".try_into().expect("const") => InternalFun::Xor,
+        "intersection".try_into().expect("const") => InternalFun::Intersection,
     }
 });
 
@@ -2256,6 +2259,11 @@ impl Modules {
                     //TODO Cast so okay?
                     return Ok((list.borrow().len() as i128).into());
                 }
+
+                if let Some(Constant::Dict(dict)) = parameters.iter().collect_single() {
+                    //TODO Cast so okay?
+                    return Ok((dict.borrow().len() as i128).into());
+                }
             }
             InternalFun::FromFile => {
                 if let Some((
@@ -2485,6 +2493,27 @@ impl Modules {
                     let IntConstant::Small(i) = i;
                     let IntConstant::Small(j) = j;
                     return Ok((i ^ j).into());
+                }
+            }
+            InternalFun::Intersection => {
+                if let Some((Constant::Dict(set1), Constant::Dict(set2))) =
+                    parameters.iter().collect_tuple()
+                {
+                    let set1 = set1.borrow();
+                    let set2 = set2.borrow();
+
+                    //TODO: Proper error.
+                    assert!(set1.values().all(|v| *v == Default::default()));
+                    assert!(set2.values().all(|v| *v == Default::default()));
+
+                    let keys1: IndexSet<_> = set1.keys().collect();
+                    let keys2: IndexSet<_> = set2.keys().collect();
+
+                    let mut result = IndexMap::new();
+                    for key in keys1.intersection(&keys2) {
+                        result.insert((*key).clone(), Constant::default());
+                    }
+                    return Ok(Constant::Dict(Rc::new(RefCell::new(result))));
                 }
             }
         }
@@ -3149,7 +3178,7 @@ fn keyword_to_token(keyword: &str) -> Option<Token> {
     } else if keyword == "TYPE" {
         Some(Token::GeneralTy(GeneralTy::Ty(Ty::Ty)))
     } else if keyword == "None" {
-        Some(Token::GeneralTy(GeneralTy::Ty(Ty::None)))
+        Some(Token::Literal(Default::default()))
     } else if keyword == "import" {
         Some(Token::Import)
     } else if keyword == "if" {

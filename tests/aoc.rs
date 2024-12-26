@@ -238,3 +238,13 @@ fn aoc22s() {
 fn aoc22g() {
     run("res/aoc/22g.ri", 2189);
 }
+
+#[test]
+fn aoc23s() {
+    run("res/aoc/23s.ri", 1302);
+}
+
+#[test]
+fn aoc23g() {
+    run("res/aoc/23g.ri", "[\"xz\", \"df\", \"kk\", \"rt\", \"ox\", \"tq\", \"fo\", \"nw\", \"sf\", \"ho\", \"cb\", \"pq\", \"wi\", ]");
+}

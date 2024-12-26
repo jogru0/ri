@@ -1,0 +1,58 @@
+import utils;
+
+fun to_graph(edges: List) -> Dict {
+    val graph = Dict.new();
+
+    for edge in edges {
+        val source = edge.get(0);
+        val target = edge.get(1);
+
+        if !graph.has(source) {
+            graph.set_new(source, Dict.new());
+        }
+
+        if !graph.has(target) {
+            graph.set_new(target, Dict.new());
+        }
+
+        graph.get(source).set_new(target, None);
+        graph.get(target).set_new(source, None);
+    }
+
+    graph
+}
+
+fun to_edge(string: List) -> List {
+    string.utils::split_at('-')
+}
+
+fun find_clique(graph: Dict, c: Dict, p: Dict, best: List) {
+    if best.utils::unwrap().len() < c.len() {
+        best.set(0, c.keys());
+    }
+
+    if c.len() + p.len() > best.utils::unwrap().len() {
+        for pp in p.keys() {
+            p.remove(pp);
+            val new_p = p.intersection(graph.get(pp));
+            c.set_new(pp, None);
+            graph.find_clique(c, new_p, best);
+            c.remove(pp);
+        }
+    }
+}
+
+fun main() -> List {
+    val graph = List.from_file("res/aoc/23.txt").lines().utils::map(to_edge).to_graph();
+
+    val best = utils::optional(List.new());
+    val c = Dict.new();
+    val p = Dict.new();
+    for pp in graph.keys() {
+        p.set_new(pp, None);
+    }
+
+    graph.find_clique(c, p, best);
+
+    best.utils::unwrap()
+}

@@ -216,7 +216,7 @@ fun split_at(input_string: List, separator: char) -> List {
     result
 }
 
-fun insert_edge(graph: Dict, source: int, target: int) -> None {
+fun insert_edge(graph: Dict, source: int, target: int) {
     if graph.has(source) {
         val targets = graph.get(source);
         targets.push(target);

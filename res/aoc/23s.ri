@@ -1,0 +1,75 @@
+import utils;
+
+fun to_graph(edges: List) -> Dict {
+    val graph = Dict.new();
+
+    for edge in edges {
+        val source = edge.get(0);
+        val target = edge.get(1);
+
+        if !graph.has(source) {
+            graph.set_new(source, Dict.new());
+        }
+
+        if !graph.has(target) {
+            graph.set_new(target, Dict.new());
+        }
+
+        graph.get(source).set_new(target, None);
+        graph.get(target).set_new(source, None);
+    }
+
+    graph
+}
+
+fun to_edge(string: List) -> List {
+    string.utils::split_at('-')
+}
+
+
+fun get_edges(graph: Dict) -> List {
+    val result = List.new();
+  
+    for s in graph.keys() {
+        for t in graph.get(s).keys() {
+            val edge = List.new();
+            edge.push(s);
+            edge.push(t);
+            result.push(edge);
+        }
+    }
+  
+    result
+}
+
+fun get_triangles(graph: Dict) -> List {
+    val result = List.new();
+  
+    for edge in graph.get_edges() {
+        val s = edge.get(0);
+        val t = edge.get(1);
+        
+        for third in intersection(graph.get(s), graph.get(t)).keys() {
+            val triangle = List.new();
+            triangle.push(s);
+            triangle.push(t);
+            triangle.push(third);
+            result.push(triangle);
+        }
+    }
+
+    result
+}
+
+fun main() -> int {
+    val graph = List.from_file("res/aoc/23.txt").lines().utils::map(to_edge).to_graph();
+
+    val sum = 0;
+    for triangle in graph.get_triangles() {
+        if triangle.get(0).get(0) == 't' || triangle.get(1).get(0) == 't' || triangle.get(2).get(0) == 't' {
+            sum += 1;
+        }
+    }
+
+    sum / 6
+}
