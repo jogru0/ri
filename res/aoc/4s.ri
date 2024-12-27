@@ -53,7 +53,7 @@ fun all_dirs_8() -> List {
     result
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_string: List = List.from_file("res/aoc/4.txt");
     
     val grid = utils::parse_grid(input_string);
@@ -70,6 +70,5 @@ fun main() -> int {
             }
         }
     }
-
-    sum
+    sum.utils::to_string()
 }

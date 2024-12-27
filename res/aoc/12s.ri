@@ -40,7 +40,7 @@ fun perimeter(region: Dict) -> int {
 }
 
 
-fun main() -> int {
+fun main() -> List {
     val grid = List.from_file("res/aoc/12.txt").utils::parse_grid();
 
     val regions = Dict.new();
@@ -64,6 +64,5 @@ fun main() -> int {
         val region = regions.get(r_id);
         sum += region.area() * region.perimeter();
     }
-
-    sum
+    sum.utils::to_string()
 }

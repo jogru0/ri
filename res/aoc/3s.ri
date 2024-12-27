@@ -1,3 +1,5 @@
+import utils;
+
 fun is_some(optional: List, c: char) -> bool {
     optional.len() == 1 && optional.get(0) == c
 }
@@ -126,7 +128,7 @@ fun parse_mul(input_string: List, i: int) -> int {
     n1.get(0) * n2.get(0)
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_string: List = List.from_file("res/aoc/3.txt");
     
     val sum = 0;
@@ -138,5 +140,5 @@ fun main() -> int {
         sum = sum + parse_mul(input_string, i);
         i += 1;
     }
-    sum
+    sum.utils::to_string()
 }

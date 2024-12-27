@@ -9,7 +9,7 @@ fun extract_pos(grid: Dict, c: char) -> List {
     }
 }
 
-fun main() -> int {
+fun main() -> List {
     val grid = List.from_file("res/aoc/20.txt").utils::parse_grid();
 
     val start = grid.extract_pos('S');
@@ -43,6 +43,5 @@ fun main() -> int {
             }
         }
     }
-    
-    sum
+    sum.utils::to_string()
 }

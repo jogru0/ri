@@ -201,7 +201,7 @@ fun generate_sequences(code_in: List, moves: Dict) -> List {
     result
 }
 
-fun main() -> int {
+fun main() -> List {
     val codes = List.from_file("res/aoc/21.txt").lines();
 
     val num_keypad = Dict.new();
@@ -236,6 +236,5 @@ fun main() -> int {
         val leng = seq.sequence_length(moves, 25, memo);
         sum += leng * code.utils::parse_num(utils::optional(0)).utils::unwrap();  
     }
-
-    sum
+    sum.utils::to_string()
 }

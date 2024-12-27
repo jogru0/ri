@@ -108,7 +108,7 @@ fun score_boxes(grid: Dict) -> int {
     sum
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_lines = List.from_file("res/aoc/15.txt").lines();
 
     val i = 0;
@@ -168,5 +168,5 @@ fun main() -> int {
         pos = grid.do_move(pos, move);
     }
 
-    grid.score_boxes()
+    grid.score_boxes().utils::to_string()
 }

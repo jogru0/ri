@@ -1,6 +1,6 @@
 import utils;
 
-fun main() -> int {
+fun main() -> List {
     val robots = List.from_file("res/aoc/14.txt").lines().utils::map(utils::parse_numbers_in_line);
 
     val xmax = 101;
@@ -36,5 +36,5 @@ fun main() -> int {
         }
     }
 
-    bl * br * tl * tr
+    utils::to_string(bl * br * tl * tr)
 }

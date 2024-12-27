@@ -5,7 +5,7 @@ fun parse_int(s: List) -> int {
     s.parse(int)
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_string: List = List.from_file("res/aoc/1.txt");
 
     val number_strings: List = input_string.split_whitespace();
@@ -50,6 +50,5 @@ fun main() -> int {
         i = i+1;
     }
 
-    sum
-
+    sum.utils::to_string()
 }

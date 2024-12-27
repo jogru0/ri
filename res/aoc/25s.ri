@@ -51,7 +51,7 @@ fun matches(key: List, lock: List) -> bool {
     true
 }
 
-fun main() -> int {
+fun main() -> List {
     val key_list = List.new();
     val lock_list = List.new();
     val lss = List.from_file("res/aoc/25.txt").lines().utils::split_at("");
@@ -67,5 +67,5 @@ fun main() -> int {
            }
         }
     }
-    sum
+    sum.utils::to_string()
 }

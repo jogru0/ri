@@ -10,7 +10,7 @@ fun guard_pos(grid: Dict) -> List {
     0 / 0
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_string: List = List.from_file("res/aoc/6.txt");
     
     val grid = utils::parse_grid(input_string);
@@ -28,7 +28,7 @@ fun main() -> int {
         val new_pos = pos.utils::add_point(dir);
 
         if !grid.has(new_pos) {
-            return visited.keys().len()
+            return visited.keys().len().utils::to_string()
         }
 
         if grid.get(new_pos) == '#' {
@@ -36,6 +36,5 @@ fun main() -> int {
         } else {
             pos = new_pos;
         }
-
-    } 
+    }
 }

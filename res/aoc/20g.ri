@@ -40,7 +40,7 @@ fun points_with_distance(p: List, dist: int) -> List {
     result
 }
 
-fun main() -> int {
+fun main() -> List {
     val grid = List.from_file("res/aoc/20.txt").utils::parse_grid();
 
     val start = grid.extract_pos('S');
@@ -80,6 +80,5 @@ fun main() -> int {
             dist += 1;
         }
     }
-    
-    sum
+    sum.utils::to_string()
 }

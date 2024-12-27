@@ -54,5 +54,7 @@ fun main() -> List {
 
     graph.find_clique(c, p, best);
 
-    best.utils::unwrap()
+    val result = best.utils::unwrap();
+    result.sort();
+    result.utils::join(",")
 }

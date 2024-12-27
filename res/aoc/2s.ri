@@ -1,3 +1,4 @@
+import utils;
 
 fun parse_numbers(s: List) -> List {
     val number_strings: List = s.split_whitespace();
@@ -54,7 +55,7 @@ fun is_valid_report(report: List) -> bool {
     true 
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_string: List = List.from_file("res/aoc/2.txt");
 
     val report_strings: List = input_string.lines();
@@ -75,10 +76,5 @@ fun main() -> int {
         }
         i += 1;
     }
-
-    
-
-
-    sum
-
+    sum.utils::to_string()
 }

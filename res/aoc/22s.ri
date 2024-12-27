@@ -23,13 +23,12 @@ fun apply_hash_n_times(code: int, n: int) -> int {
     code
 }
 
-fun main() -> int {
+fun main() -> List {
     val initial_codes = List.from_file("res/aoc/22.txt").lines().utils::map(utils::parse_int);
   
     val sum = 0;
     for code in initial_codes {
         sum += code.apply_hash_n_times(2000); 
     }
-
-    sum
+    sum.utils::to_string()
 }

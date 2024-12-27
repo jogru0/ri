@@ -39,7 +39,7 @@ fun causes_loop(grid: Dict, new_blocked: List, pos: List, dir: List) -> bool {
     } 
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_string: List = List.from_file("res/aoc/6.txt");
     
     val grid = utils::parse_grid(input_string);
@@ -62,5 +62,5 @@ fun main() -> int {
         }
         i.debug();
     }
-    sum
+    sum.utils::to_string()
 }

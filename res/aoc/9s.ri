@@ -25,7 +25,7 @@ fun checksum(disk: List) -> int {
     sum
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_string = List.from_file("res/aoc/9.txt");
     input_string.pop();
     val input: List = input_string.utils::map(utils::parse_digit).utils::map(utils::unwrap);
@@ -54,5 +54,5 @@ fun main() -> int {
         }
     }
 
-    checksum(disk)
+    checksum(disk).utils::to_string()
 }

@@ -1,6 +1,6 @@
 import utils;
 
-fun main() -> int {
+fun main() -> List {
     val input_lines = List.from_file("res/aoc/18.txt").lines();
 
     val corrupted = Dict.new();
@@ -30,7 +30,7 @@ fun main() -> int {
                 visited.set_new(p, None);
 
                 if p == goal {
-                    return distance_so_far;
+                    return distance_so_far.utils::to_string();
                 }
 
                 for q in p.utils::neighbors4() {

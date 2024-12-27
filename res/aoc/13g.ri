@@ -17,7 +17,7 @@ fun solve(instance: List) -> int {
     (3 * a_det + b_det) / det
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_lines = List.from_file("res/aoc/13.txt").lines();
 
     val instances = List.new();
@@ -51,5 +51,5 @@ fun main() -> int {
     for instance in instances {
         sum += instance.solve();
     }
-    sum
+    sum.utils::to_string()
 }

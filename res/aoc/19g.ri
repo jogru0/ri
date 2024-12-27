@@ -33,7 +33,7 @@ fun possibilities(word: List, prefixes: List, memo: Dict) -> int {
     result
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_lines = List.from_file("res/aoc/19.txt").lines();
 
     val prefix_line = input_lines.get(0);
@@ -52,6 +52,5 @@ fun main() -> int {
     for word in words {
         sum += word.possibilities(prefixes, memo);
     }
-
-    sum
+    sum.utils::to_string()
 }

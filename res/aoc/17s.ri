@@ -66,5 +66,5 @@ fun main() -> List {
         instruction_ptr += 2;
     }
 
-    output
+    output.utils::map(utils::to_string).utils::join(",")
 }

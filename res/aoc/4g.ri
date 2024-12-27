@@ -48,7 +48,7 @@ fun look_for(grid: Dict, pivot: List, dir1: List, dir2: List) -> bool {
 }
 
 
-fun main() -> int {
+fun main() -> List {
     val input_string: List = List.from_file("res/aoc/4.txt");
     
     val grid = utils::parse_grid(input_string);
@@ -72,5 +72,5 @@ fun main() -> int {
         }
     }
 
-    sum
+    sum.utils::to_string()
 }

@@ -48,7 +48,7 @@ fun main() -> List {
         val corr = il.utils::parse_numbers_in_line();
         corrupted.set_new(corr, None);
         if !corrupted.is_solvable() {
-            return corr;
+            return corr.utils::map(utils::to_string).utils::join(",");
         }
     }
 }

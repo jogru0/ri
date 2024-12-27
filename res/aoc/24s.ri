@@ -1,6 +1,6 @@
 import utils;
 
-fun main() -> int {
+fun main() -> List {
     val il = List.from_file("res/aoc/24.txt").lines().utils::split_at("");
     val input_current_lines = il.get(0);
     val circuit_lines = il.get(1);
@@ -73,6 +73,5 @@ fun main() -> int {
             sum += utils::pow(2, num);
         }
     }
-
-    sum
+    sum.utils::to_string()
 }

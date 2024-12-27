@@ -38,7 +38,7 @@ fun eval_done(done: Dict, final_states: List) -> int {
     positions.keys().len()
 }
 
-fun main() -> int {
+fun main() -> List {
     val grid = List.from_file("res/aoc/16.txt").utils::parse_grid();
 
     val start_pos = grid.utils::extract_pos('S');
@@ -120,7 +120,7 @@ fun main() -> int {
         }
 
         if final_states.len() != 0 {
-            return done.eval_done(final_states);
+            return done.eval_done(final_states).utils::to_string();
         }
 
         current_distance += 1;

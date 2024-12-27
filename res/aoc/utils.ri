@@ -405,3 +405,82 @@ fun split_at_sub(line: List, split: List) -> List {
     result.push(next);
     result
 }
+
+fun join(ss: List, between: List) -> List {
+    val res = List.new();
+
+    val last = ss.len();
+    if last == 0 {
+        return res;
+    }
+    last -= 1;
+    
+    val i = 0;
+    while i < last {
+        res.concat_inplace(ss.get(i));
+        res.concat_inplace(between);
+
+        i += 1;
+    }
+    res.concat_inplace(ss.get(last));
+
+    res
+}
+
+
+fun to_char(i: int) -> char {
+    if i == 0 {
+       '0' 
+    } else if i == 1 {
+       '1' 
+    } else if i == 2 {
+       '2' 
+    } else if i == 3 {
+       '3' 
+    } else if i == 4 {
+       '4' 
+    } else if i == 5 {
+       '5' 
+    } else if i == 6 {
+       '6' 
+    } else if i == 7 {
+       '7' 
+    } else if i == 8 {
+       '8' 
+    } else if i == 9 {
+       '9' 
+    } else {
+        i.debug();
+        0 / 0
+    }
+}
+
+fun to_string(i: int) -> List {
+    if i == 0 {
+        return "0"
+    };
+
+    val negative = i < 0;
+    if negative {
+        i = i.abs();
+    }
+    
+    val digits = List.new();
+    while i != 0 {
+        val digit = i % 10;
+        digits.push(digit.to_char());
+        i -= digit;
+        i /= 10;
+    }
+
+    val res = List.new();
+    if negative {
+        res.push('-');
+    }
+
+    while digits.len() != 0 {
+        res.push(digits.pop());
+    }
+
+    res
+}

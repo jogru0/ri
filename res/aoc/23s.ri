@@ -61,7 +61,7 @@ fun get_triangles(graph: Dict) -> List {
     result
 }
 
-fun main() -> int {
+fun main() -> List {
     val graph = List.from_file("res/aoc/23.txt").lines().utils::map(to_edge).to_graph();
 
     val sum = 0;
@@ -70,6 +70,5 @@ fun main() -> int {
             sum += 1;
         }
     }
-
-    sum / 6
+    utils::to_string(sum / 6)
 }

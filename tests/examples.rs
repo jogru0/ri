@@ -70,7 +70,7 @@ fn ex7() {
 
 //TODO!!!!!!!!!!!!!!
 #[test]
-fn ex9() {
+fn ex8() {
     let assert = run("res/examples/ex8.ri");
 
     assert.success().code(0).stdout("Result: -1\n");

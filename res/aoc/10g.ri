@@ -14,7 +14,7 @@ fun do_step(reachable_nines: Dict, grid: Dict, now: char, prev: char) {
     }
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_string = List.from_file("res/aoc/10.txt");
     val grid = input_string.utils::parse_grid();
    
@@ -41,5 +41,5 @@ fun main() -> int {
             sum += reachable_nines.get(p);
         }
     }
-    sum
+    sum.utils::to_string()
 }

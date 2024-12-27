@@ -89,7 +89,7 @@ fun get_sequence_length(code: List, num_keypad: Dict, dir_keypad: Dict) -> int {
     }
 }
 
-fun main() -> int {
+fun main() -> List {
     val codes = List.from_file("res/aoc/21.txt").lines();
 
     val num_keypad = Dict.new();
@@ -116,6 +116,5 @@ fun main() -> int {
     for code in codes {
         sum += code.get_sequence_length(num_keypad, dir_keypad) * code.utils::parse_num(utils::optional(0)).utils::unwrap(); 
     }
-
-    sum
+    sum.utils::to_string()
 }

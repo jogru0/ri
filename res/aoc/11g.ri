@@ -34,7 +34,7 @@ fun add_stone(stones: Dict, stone: int, quantity: int) {
     }
 }
 
-fun main() -> int {
+fun main() -> List {
     val stones_list = List.from_file("res/aoc/11.txt").split_whitespace().utils::map(parse_int);
 
     val stones = Dict.new();
@@ -52,5 +52,5 @@ fun main() -> int {
     for stone in stones.keys() {
         sum += stones.get(stone);
     }
-    sum
+    sum.utils::to_string()
 }

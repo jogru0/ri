@@ -1,3 +1,5 @@
+import utils;
+
 fun is_some(optional: List, c: char) -> bool {
     optional.len() == 1 && optional.get(0) == c
 }
@@ -132,7 +134,7 @@ fun entertain(input_string: List, entertained: List, i: int) -> bool {
     true
 }
 
-fun main() -> int {
+fun main() -> List {
     val input_string: List = List.from_file("res/aoc/3.txt");
     
     val sum = 0;
@@ -155,5 +157,5 @@ fun main() -> int {
 
         i += 1;
     }
-    sum
+    sum.utils::to_string()
 }

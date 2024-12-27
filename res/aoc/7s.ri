@@ -44,7 +44,7 @@ fun parse_int(s: List) -> int {
 }
 
 
-fun main() -> int {
+fun main() -> List {
     val input_string: List = List.from_file("res/aoc/7.txt");
     
     val inputs = List.new();
@@ -58,5 +58,5 @@ fun main() -> int {
     for problem in inputs {
         sum += solve(problem);
     }
-    sum
+    sum.utils::to_string()
 }

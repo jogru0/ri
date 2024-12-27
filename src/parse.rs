@@ -2332,21 +2332,68 @@ impl Modules {
                 if let Some(Constant::HashableConstant(HashableConstant::List(list))) =
                     parameters.iter().collect_single()
                 {
-                    let mut new_list = Vec::new();
-                    for val in list.borrow().iter() {
-                        let &HashableConstant::PrimitiveConstant(PrimitiveConstant::Int(i)) = val
-                        else {
-                            return Err(RuntimeError::TypeError(Ty::Int, val.ty()));
-                        };
-                        new_list.push(i);
-                    }
-                    new_list.sort();
-                    let new_list = new_list
-                        .into_iter()
-                        .map(|i| HashableConstant::PrimitiveConstant(PrimitiveConstant::Int(i)))
-                        .collect();
+                    let ty = list.borrow().first().map(|elem| elem.ty());
+                    match ty {
+                        Some(Ty::Int) => {
+                            let mut new_list = Vec::new();
+                            for val in list.borrow().iter() {
+                                let &HashableConstant::PrimitiveConstant(PrimitiveConstant::Int(i)) =
+                                    val
+                                else {
+                                    return Err(RuntimeError::TypeError(Ty::Int, val.ty()));
+                                };
+                                new_list.push(i);
+                            }
+                            new_list.sort();
+                            let new_list = new_list
+                                .into_iter()
+                                .map(|i| {
+                                    HashableConstant::PrimitiveConstant(PrimitiveConstant::Int(i))
+                                })
+                                .collect();
+                            *list.borrow_mut() = new_list;
+                        }
+                        Some(Ty::List) => {
+                            let mut new_list = Vec::new();
 
-                    *list.borrow_mut() = new_list;
+                            for val in list.borrow().iter() {
+                                let HashableConstant::List(elem) = val else {
+                                    return Err(RuntimeError::TypeError(Ty::List, val.ty()));
+                                };
+
+                                let mut s = String::new();
+                                for c in elem.borrow().iter() {
+                                    let &HashableConstant::PrimitiveConstant(
+                                        PrimitiveConstant::Char(ch),
+                                    ) = c
+                                    else {
+                                        return Err(RuntimeError::TypeError(Ty::Char, c.ty()));
+                                    };
+
+                                    s.push(ch);
+                                }
+                                new_list.push(s);
+                            }
+                            new_list.sort();
+                            let new_list = new_list
+                                .into_iter()
+                                .map(|i| {
+                                    let i = i
+                                        .chars()
+                                        .map(|c| {
+                                            HashableConstant::PrimitiveConstant(
+                                                PrimitiveConstant::Char(c),
+                                            )
+                                        })
+                                        .collect_vec();
+                                    HashableConstant::List(Rc::new(RefCell::new(i)))
+                                })
+                                .collect();
+                            *list.borrow_mut() = new_list;
+                        }
+                        Some(_) => todo!(),
+                        None => {}
+                    }
 
                     return Ok(Constant::default());
                 }

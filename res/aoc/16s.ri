@@ -7,7 +7,7 @@ fun state(pos: List, dir: List) -> List {
     st
 }
 
-fun main() -> int {
+fun main() -> List {
     val grid = List.from_file("res/aoc/16.txt").utils::parse_grid();
 
     val start_pos = grid.utils::extract_pos('S');
@@ -39,7 +39,7 @@ fun main() -> int {
                 val dir = st.get(1);
 
                 if pos == end_pos {
-                    return current_distance;
+                    return current_distance.utils::to_string();
                 }
 
                 val next_pos = utils::add_point(pos, dir);

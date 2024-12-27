@@ -231,5 +231,6 @@ fun main() -> List {
         result.push(circuit.get(swap.get(1)).get(3));
     }
 
-    result
+    result.sort();
+    result.utils::join(",")
 }

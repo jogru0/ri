@@ -60,7 +60,7 @@ fun evaluate_price_list(price_list: List, scores: Dict) {
     }
 }
 
-fun main() -> int {
+fun main() -> List {
     val initial_codes = List.from_file("res/aoc/22.txt").lines().utils::map(utils::parse_int);
   
     val price_lists = initial_codes.utils::map(get_price_list);
@@ -74,5 +74,5 @@ fun main() -> int {
     for key in scores.keys() {
         m utils::max= scores.get(key);
     }
-    m
+    m.utils::to_string()
 }

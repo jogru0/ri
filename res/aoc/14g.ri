@@ -19,13 +19,13 @@ fun check_for_tree(robots: List, seconds: int) -> bool {
     true
 }
 
-fun main() -> int {
+fun main() -> List {
     val robots = List.from_file("res/aoc/14.txt").lines().utils::map(utils::parse_numbers_in_line);
 
     val s = 0;
     while true {
         if robots.check_for_tree(s) {
-            return s;
+            return s.utils::to_string();
         }
         s += 1;
     }
