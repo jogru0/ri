@@ -262,3 +262,8 @@ fn aoc24g() {
         "[\"qdq\", \"pvb\", \"z38\", \"hqh\", \"z24\", \"mmk\", \"vkq\", \"z11\", ]",
     );
 }
+
+#[test]
+fn aoc25s() {
+    run("res/aoc/25s.ri", 3360);
+}

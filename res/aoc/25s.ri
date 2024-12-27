@@ -1,0 +1,71 @@
+import utils;
+
+fun parse_grid_to_key_or_lock(ls: List, key_list: List, lock_list: List) {
+    val grid = ls.utils::parse_grid_lines();
+
+    val is_lock = grid.get(utils::point(0, 0)) == '#';
+
+    val start_y = if is_lock {
+        0
+    } else {
+        6
+    };
+    
+    val step_y = if is_lock {
+        1
+    } else {
+        -1
+    };
+    
+    val result = List.new();
+    val x = 0;
+    while x < 5 {
+        val h = 0;
+        val y = start_y;
+        while grid.get(utils::point(x, y)) == '#' {
+            y += step_y;
+            h += 1;
+        }
+
+        result.push(h);
+        x += 1;
+    }
+
+    if is_lock {
+        lock_list.push(result)
+    } else {
+        key_list.push(result)
+    }
+}
+
+fun matches(key: List, lock: List) -> bool {
+     val i = 0;
+    while i < 5 {
+        if key.get(i) + lock.get(i) > 7 {
+            return false;
+        }
+
+        i += 1;
+    }
+
+    true
+}
+
+fun main() -> int {
+    val key_list = List.new();
+    val lock_list = List.new();
+    val lss = List.from_file("res/aoc/25.txt").lines().utils::split_at("");
+    for ls in lss {
+        ls.parse_grid_to_key_or_lock(key_list, lock_list);
+    }
+    
+    val sum = 0;
+    for key in key_list {
+        for lock in lock_list {
+           if key.matches(lock) {
+            sum += 1;
+           }
+        }
+    }
+    sum
+}
