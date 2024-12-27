@@ -1,0 +1,78 @@
+import utils;
+
+fun main() -> int {
+    val il = List.from_file("res/aoc/24.txt").lines().utils::split_at("");
+    val input_current_lines = il.get(0);
+    val circuit_lines = il.get(1);
+
+
+    val currents = Dict.new();
+    for icl in input_current_lines {
+        val name_value = icl.utils::split_at_sub(": ");
+        currents.set_new(name_value.get(0), name_value.get(1).parse(int));
+    }
+
+    val circuit = List.new();
+    for cl in circuit_lines {
+        val elements = cl.utils::split_at(' ');
+        val component = List.new();
+        component.push(elements.get(0));
+        component.push(elements.get(1));
+        component.push(elements.get(2));
+        component.push(elements.get(4));
+        circuit.push(component);
+    }
+
+    val todo = Dict.new();
+    for i, ignore in circuit {
+        todo.set_new(i, None);
+    }
+
+    while todo.len() != 0 {
+        for i in todo.keys() {
+            val component = circuit.get(i);
+            if currents.has(component.get(0)) && currents.has(component.get(2)) {
+                val in1 = currents.get(component.get(0));
+                val in2 = currents.get(component.get(2));
+                val out_cable = component.get(3);
+                val combinator = component.get(1);
+                
+                val out = if combinator == "XOR" {
+                    if in1 == in2 {
+                        0
+                    } else {
+                        1
+                    }
+                } else if combinator == "OR" {
+                    if in1 == 0 && in2 == 0 {
+                        0
+                    } else {
+                        1
+                    }
+                } else if combinator == "AND" {
+                    if in1 != 1 || in2 != 1 {
+                        0
+                    } else {
+                        1
+                    }
+                } else {
+                    combinator.debug();
+                    0 / 0
+                }
+
+                currents.set_new(out_cable, out);
+                todo.remove(i);
+            }
+        }
+    }
+
+    val sum = 0;
+    for cable in currents.keys() {
+        if cable.get(0) == 'z' && currents.get(cable) == 1 {
+            val num = utils::parse_num(cable, utils::optional(1)).utils::unwrap();
+            sum += utils::pow(2, num);
+        }
+    }
+
+    sum
+}

@@ -67,3 +67,11 @@ fn ex7() {
         .code(0)
         .stdout("Result: [30, -1, 7, 6, (), 7, (), -1, (), ]\n");
 }
+
+//TODO!!!!!!!!!!!!!!
+#[test]
+fn ex9() {
+    let assert = run("res/examples/ex8.ri");
+
+    assert.success().code(0).stdout("Result: -1\n");
+}

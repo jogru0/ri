@@ -200,7 +200,7 @@ fun set_if_new(dict: Dict, elem: any) {
     }
 }
 
-fun split_at(input_string: List, separator: char) -> List {
+fun split_at(input_string: List, separator: any) -> List {
     val result = List.new();
     val current = List.new();
 

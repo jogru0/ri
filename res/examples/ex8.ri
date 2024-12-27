@@ -1,0 +1,8 @@
+fun f() {}
+
+fun main() -> int {
+    val res = -1;
+    f()
+    res = 0;
+    res
+}

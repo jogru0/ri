@@ -248,3 +248,17 @@ fn aoc23s() {
 fn aoc23g() {
     run("res/aoc/23g.ri", "[\"xz\", \"df\", \"kk\", \"rt\", \"ox\", \"tq\", \"fo\", \"nw\", \"sf\", \"ho\", \"cb\", \"pq\", \"wi\", ]");
 }
+
+#[test]
+fn aoc24s() {
+    run("res/aoc/24s.ri", 48063513640678i64);
+}
+
+#[test]
+#[ignore = "slow"]
+fn aoc24g() {
+    run(
+        "res/aoc/24g.ri",
+        "[\"qdq\", \"pvb\", \"z38\", \"hqh\", \"z24\", \"mmk\", \"vkq\", \"z11\", ]",
+    );
+}
